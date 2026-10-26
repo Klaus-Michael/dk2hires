@@ -1,0 +1,16 @@
+LIBRARY dsound.dll
+EXPORTS
+    DirectSoundCreate=px_DirectSoundCreate@12                       @1
+    DirectSoundEnumerateA=px_DirectSoundEnumerateA@8                @2
+    DirectSoundEnumerateW=px_DirectSoundEnumerateW@8                @3
+    DllCanUnloadNow=px_DllCanUnloadNow@0                            @4 PRIVATE
+    DllGetClassObject=px_DllGetClassObject@12                       @5 PRIVATE
+    DirectSoundCaptureCreate=px_DirectSoundCaptureCreate@12         @6
+    DirectSoundCaptureEnumerateA=px_DirectSoundCaptureEnumerateA@8  @7
+    DirectSoundCaptureEnumerateW=px_DirectSoundCaptureEnumerateW@8  @8
+    GetDeviceID=px_GetDeviceID@8                                    @9
+    DirectSoundFullDuplexCreate=px_DirectSoundFullDuplexCreate@40   @10
+    DirectSoundCreate8=px_DirectSoundCreate8@12                     @11
+    DirectSoundCaptureCreate8=px_DirectSoundCaptureCreate8@12       @12
+    DllRegisterServer=px_DllRegisterServer@0                        @13 PRIVATE
+    DllUnregisterServer=px_DllUnregisterServer@0                    @14 PRIVATE
