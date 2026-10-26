@@ -3,12 +3,18 @@
 **English.** dk2hires is a small runtime fix that lets the GOG version of Dungeon Keeper 2 (1.7)
 run at resolutions such as 3840×2160 and 3840×2560. It is a `dsound.dll` proxy that patches the
 game in memory and leaves every game file untouched. This is a proof of concept, tested only on
-Linux with Wine/Proton, without support. The instructions below and the messages of the scripts
+Linux with Wine/Proton, without support. The cause and the fix were found and built by an AI agent, Claude Opus 5.5 in Claude Code. The instructions below and the messages of the scripts
 are in German.
 
 **Proof of Concept, nur unter Linux/Proton getestet, kein Support.**
 
 Hintergrund zum Fix im Video: [Wird jetzt alles Open Source?](https://youtu.be/kYacWiIPLtY).
+
+## Entstehung
+
+Ursache und Fix hat ein KI-Agent gefunden und gebaut: Claude Opus 5.5 in Claude Code, in knapp fünf Stunden und
+ohne eine einzige Rückfrage. Ich habe ihm gesagt, was ich haben will; wie das abgelaufen ist, erzähle ich im
+Video.
 
 ## Was der Fix macht
 
