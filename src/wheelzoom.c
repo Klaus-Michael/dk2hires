@@ -1,4 +1,4 @@
-/* Mouse wheel -> the existing Home/End zoom controls, inside DirectInput.
+/* Mouse wheel -> Home/End zoom; middle button -> X mouse camera rotation.
  * GOG 1.7 uses buffered GetDeviceData during gameplay; GetDeviceState is
  * mainly used for initialization. Handle both without OS input injection.
  */
@@ -17,12 +17,14 @@ typedef struct { void *object; int kind; HANDLE notification; } device_t;
 #define MAX_DEVICES 32
 #define HOME_KEY 0xc7
 #define END_KEY 0xcf
+#define ROTATE_KEY 0x2d /* X: the game's Camera Mouse Rotate control. */
 static table_t input_tables[MAX_TABLES], device_tables[MAX_TABLES];
 static device_t devices[MAX_DEVICES];
 static CRITICAL_SECTION wheel_cs;
 static create_input_fn real_create_input;
 static DWORD zoom_ms = 80;
 static int inverted, remainder, direction;
+static int zoom_enabled = 1, rotate_enabled = 1, middle_down, buffered_rotate_key;
 static DWORD remaining_until;
 static BYTE buffered_keys[256];
 static int buffered_zoom_key;
@@ -48,14 +50,23 @@ static int wheel_foreground(void) {
 
 /* Caller holds wheel_cs. Unsigned time subtraction handles tick-count wrap. */
 static void clear_zoom(void) { direction = 0; remainder = 0; }
+static void clear_motion(void) { clear_zoom(); middle_down = 0; }
+static void queue_middle(int down, int foreground) {
+    int desired = rotate_enabled && foreground && down;
+    if (desired == middle_down) return;
+    middle_down = desired;
+    if (!arm_notification_timer()) middle_down = 0;
+    wake_keyboards();
+}
 /* DirectInput signals this same event for physical keys. The game does not
  * call GetDeviceData until notified, so synthetic buffered events need it too.
  * Callbacks and device-handle replacement are serialized by wheel_cs. */
 static void CALLBACK notification_tick(void *context, BOOLEAN fired) {
     (void)context; (void)fired;
     EnterCriticalSection(&wheel_cs);
-    if (!wheel_foreground() || (direction && (LONG)(remaining_until - wheel_now()) <= 0)) clear_zoom();
-    if (direction || buffered_zoom_key) wake_keyboards();
+    if (!wheel_foreground()) clear_motion();
+    else if (direction && (LONG)(remaining_until - wheel_now()) <= 0) clear_zoom();
+    if (direction || buffered_zoom_key || middle_down || buffered_rotate_key) wake_keyboards();
     else pause_notification_timer();
     LeaveCriticalSection(&wheel_cs);
 }
@@ -74,6 +85,7 @@ static int arm_notification_timer(void) {
 static void queue_wheel(LONG delta, DWORD now, int foreground) {
     int notches, sign;
     DWORD duration, pending;
+    if (!zoom_enabled) return;
     if (!foreground) { clear_zoom(); return; }
     if (delta > 12000) delta = 12000;
     if (delta < -12000) delta = -12000;
@@ -133,11 +145,18 @@ static HRESULT WINAPI wheel_get_state(void *object, DWORD size, void *data) {
     result = original(object, size, data);
     foreground = wheel_foreground();
     EnterCriticalSection(&wheel_cs);
-    if (FAILED(result) || !foreground) clear_zoom();
-    else if (data && kind == 1 && size == 16) {
+    if (FAILED(result) || !foreground) clear_motion();
+    if (SUCCEEDED(result) && data && kind == 1 && size == 16) {
         queue_wheel(((LONG *)data)[2], wheel_now(), foreground);
+        if (rotate_enabled) {
+            queue_middle((((BYTE *)data)[14] & 0x80) != 0, foreground);
+            ((BYTE *)data)[14] = 0;
+        }
     } else if (data && kind == 2 && size == 256) {
-        apply_zoom((BYTE *)data, wheel_now(), foreground);
+        if (SUCCEEDED(result)) {
+            apply_zoom((BYTE *)data, wheel_now(), foreground);
+            if (middle_down) ((BYTE *)data)[ROTATE_KEY] |= 0x80;
+        }
     }
     LeaveCriticalSection(&wheel_cs);
     return result;
@@ -169,7 +188,7 @@ static HRESULT WINAPI wheel_get_data(void *object, DWORD size, void *data, DWORD
     foreground = wheel_foreground();
     now = wheel_now();
     EnterCriticalSection(&wheel_cs);
-    if (FAILED(result) || !foreground) clear_zoom();
+    if (FAILED(result) || !foreground) clear_motion();
     if (FAILED(result) || !data || !count || size < 16 || size > 64 || *count > capacity) {
         LeaveCriticalSection(&wheel_cs);
         return result;
@@ -182,6 +201,21 @@ static HRESULT WINAPI wheel_get_data(void *object, DWORD size, void *data, DWORD
         if (kind == 1 && event[0] == 8 && !peek) {
             queue_wheel((LONG)event[1], now, foreground);
         }
+        if (kind == 1 && event[0] == 14 && rotate_enabled && !peek)
+            queue_middle((event[1] & 0x80) != 0, foreground);
+    }
+    /* Consume the mapped mouse button, leaving movement/wheel/other buttons intact. */
+    if (kind == 1 && rotate_enabled) {
+        DWORD kept = 0;
+        for (i = 0; i < received; i++) {
+            BYTE *event = (BYTE *)data + i * size;
+            if (((DWORD *)event)[0] != 14) {
+                DWORD j;
+                for (j = 0; j < size; j++) ((BYTE *)data)[kept * size + j] = event[j];
+                kept++;
+            }
+        }
+        *count = kept;
     }
     if (kind == 2) {
         for (i = 0; i < 256; i++) physical[i] = buffered_keys[i];
@@ -209,6 +243,25 @@ static HRESULT WINAPI wheel_get_data(void *object, DWORD size, void *data, DWORD
             key = desired;
         }
         if (!peek) buffered_zoom_key = key;
+        /* Preserve a real held X on middle release. If a physical X-up was
+         * delivered while dragging, reassert X after that event. */
+        key = buffered_rotate_key;
+        for (i = 0; i < received; i++) {
+            DWORD *event = (DWORD *)((BYTE *)data + i * size);
+            if (event[0] == ROTATE_KEY && !(event[1] & 0x80)) key = 0;
+        }
+        if (key && !middle_down) {
+            if (physical[ROTATE_KEY] & 0x80) key = 0;
+            else if (*count < capacity) {
+                put_key_event((BYTE *)data + (*count)++ * size, size, ROTATE_KEY, 0, now, ++sequence);
+                key = 0;
+            }
+        }
+        if (!key && middle_down && *count < capacity) {
+            put_key_event((BYTE *)data + (*count)++ * size, size, ROTATE_KEY, 1, now, ++sequence);
+            key = 1;
+        }
+        if (!peek) buffered_rotate_key = key;
     }
     if (!peek) event_sequence = sequence;
     LeaveCriticalSection(&wheel_cs);
@@ -262,7 +315,7 @@ static ULONG WINAPI wheel_release(void *object) {
             devices[i].notification = NULL;
             devices[i].object = NULL;
         }
-        clear_zoom();
+        clear_motion();
         LeaveCriticalSection(&wheel_cs);
     }
     return refs;
@@ -346,7 +399,9 @@ static HRESULT WINAPI wheel_create_input(HINSTANCE instance, DWORD version, void
     return result;
 }
 int wheelzoom_install(const char *ini) {
-    if (!GetPrivateProfileIntA("fix", "MouseWheelZoom", 1, ini)) return 0;
+    zoom_enabled = GetPrivateProfileIntA("fix", "MouseWheelZoom", 1, ini) != 0;
+    rotate_enabled = GetPrivateProfileIntA("fix", "MiddleMouseRotate", 1, ini) != 0;
+    if (!zoom_enabled && !rotate_enabled) return 0;
     zoom_ms = GetPrivateProfileIntA("fix", "WheelZoomMs", 80, ini);
     if (zoom_ms < 20) zoom_ms = 20;
     if (zoom_ms > 250) zoom_ms = 250;
@@ -354,6 +409,7 @@ int wheelzoom_install(const char *ini) {
     InitializeCriticalSection(&wheel_cs);
     real_create_input = (create_input_fn)iat_hook("dinput.dll", "DirectInputCreateA", (void *)wheel_create_input);
     if (!real_create_input) { dk_log("wheelzoom: DirectInput-Import nicht gefunden"); return 0; }
-    dk_log("wheelzoom: aktiv, %lu ms pro Rastung%s", zoom_ms, inverted ? " (invertiert)" : "");
+    if (zoom_enabled) dk_log("wheelzoom: aktiv, %lu ms pro Rastung%s", zoom_ms, inverted ? " (invertiert)" : "");
+    dk_log("middlerotate: %s (X)", rotate_enabled ? "aktiv" : "aus");
     return 1;
 }

@@ -109,6 +109,15 @@ oder Alt-Taste wird kein Mausrad-Zoom erzeugt, damit Kamera-Tastenkombinationen
 nicht versehentlich ausgeloest werden. Im Log bestaetigen `wheelzoom: aktiv`,
 `wheelzoom: Maus eingebunden` und `wheelzoom: Tastatur eingebunden` die Initialisierung.
 
+Die mittlere Maustaste laesst sich zum Drehen der 3D-Ansicht halten: Taste halten
+und die Maus bewegen. Die Erweiterung verwendet die vorhandene Funktion
+`Camera Mouse Rotate` (Standardtaste X). Die Belegung von X muss deshalb im Spiel
+auf dem Standard bleiben. Loslassen beendet die Drehung; Fokusverlust gibt die
+simulierte Taste ebenfalls frei. Die physische X-Taste bleibt verwendbar.
+`MiddleMouseRotate=1` unter `[fix]` aktiviert die Funktion (Standard),
+`MiddleMouseRotate=0` schaltet sie ab. Sie funktioniert unabhaengig von
+`MouseWheelZoom`. Nach einer Aenderung das Spiel neu starten.
+
 Voraussetzungen: Linux, bash, Python 3, coreutils, findutils, diffutils, grep, sed. Das Spiel muss einmal
 gestartet worden sein, damit sein Wine-Prefix existiert, und beim Einspielen beendet sein.
 

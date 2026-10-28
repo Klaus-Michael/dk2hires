@@ -18,6 +18,7 @@ void dk_log(const char *fmt, ...) { (void)fmt; }
 void *iat_hook(const char *dll, const char *func, void *repl) { (void)dll; (void)func; (void)repl; return NULL; }
 typedef struct { void **table; int kind; } fake_device;
 static LONG mouse_delta;
+static int mouse_middle, mouse_middle_event = -1;
 static HRESULT read_result = S_OK;
 static BYTE physical_keys[256];
 static int mouse_reads, keyboard_reads;
@@ -27,7 +28,7 @@ static HRESULT WINAPI fake_state(void *obj, DWORD size, void *data) {
     fake_device *device = obj;
     if (FAILED(read_result)) return read_result;
     memset(data, 0, size);
-    if (device->kind == 1) { ((LONG *)data)[2] = mouse_delta; mouse_delta = 0; mouse_reads++; }
+    if (device->kind == 1) { ((LONG *)data)[2] = mouse_delta; ((BYTE *)data)[14] = mouse_middle ? 0x80 : 0; mouse_delta = 0; mouse_reads++; }
     else { memcpy(data, physical_keys, size); keyboard_reads++; }
     return S_OK;
 }
@@ -39,7 +40,11 @@ static HRESULT WINAPI fake_data(void *obj, DWORD size, void *data, DWORD *count,
     DIDEVICEOBJECTDATA event = {0};
     assert(size == sizeof(event));
     *count = 0;
-    if (device->kind == 1 && mouse_delta && data && capacity) {
+    if (device->kind == 1 && mouse_middle_event >= 0 && data && capacity) {
+        event.dwOfs = 14; event.dwData = mouse_middle_event ? 0x80 : 0;
+        memcpy(data, &event, size); *count = 1;
+        if (!(flags & DIGDD_PEEK)) mouse_middle_event = -1;
+    } else if (device->kind == 1 && mouse_delta && data && capacity) {
         event.dwOfs = 8; event.dwData = (DWORD)mouse_delta; event.dwTimeStamp = test_now;
         memcpy(data, &event, size); *count = 1;
         if (!(flags & DIGDD_PEEK)) mouse_delta = 0;
@@ -261,6 +266,67 @@ int main(int argc, char **argv) {
         }
     }
     puts("PASS: DirectInput chaining, wheel direction, fractional/multiple notches, expiry, focus, modifiers, physical keys, tick wrap, failed reads, queue cap, device recreation.");
+    {
+        DIDEVICEOBJECTDATA events[8];
+        DWORD count;
+        HANDLE ready = CreateEventA(NULL,FALSE,FALSE,NULL);
+        assert(ready);
+        assert(SUCCEEDED(wheel_set_notification(&keyboard,ready)));
+        clear_motion(); buffered_zoom_key = 0;
+        mouse_middle = 1; feed(0); keys(data); assert(data[ROTATE_KEY] == 0x80);
+        mouse_middle = 0; feed(0); keys(data); assert(!data[ROTATE_KEY]);
+        /* PEEK never starts a drag; the mapped button is consumed. */
+        mouse_middle_event = 1; count = 8;
+        wheel_get_data(&mouse,sizeof(events[0]),events,&count,DIGDD_PEEK);
+        assert(count == 0 && !middle_down && mouse_middle_event == 1);
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert(count == 0 && middle_down);
+        assert(WaitForSingleObject(ready,0) == WAIT_OBJECT_0);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,DIGDD_PEEK);
+        assert(count == 1 && events[0].dwOfs == ROTATE_KEY && events[0].dwData == 0x80 && !buffered_rotate_key);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 1 && buffered_rotate_key);
+        test_now += 1000; notification_tick(NULL,TRUE);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 0 && middle_down); /* Held, no expiry or repeat. */
+        /* Physical X release while dragging must reassert the camera control. */
+        physical_event_key = ROTATE_KEY; physical_event_data = 0;
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 2 && events[0].dwData == 0 && events[1].dwOfs == ROTATE_KEY && events[1].dwData == 0x80);
+        mouse_middle_event = 0; count = 8;
+        wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        physical_event_key = 0x1e; physical_event_data = 0;
+        count = 1; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 1 && buffered_rotate_key); /* Full buffer defers release. */
+        count = 1; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 1 && events[0].dwOfs == ROTATE_KEY && !events[0].dwData && !buffered_rotate_key);
+        mouse_middle_event = 1; count = 8;
+        wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        physical_event_key = ROTATE_KEY; physical_event_data = 0x80;
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        mouse_middle_event = 0; count = 8;
+        wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 0 && !buffered_rotate_key); /* Preserve physically held X. */
+        physical_event_key = ROTATE_KEY; physical_event_data = 0;
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        mouse_middle_event = 1; count = 8;
+        zoom_enabled = 0; /* Rotation works with wheel zoom disabled. */
+        wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 1 && buffered_rotate_key);
+        test_foreground = 0; notification_tick(NULL,TRUE);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 1 && !events[0].dwData && !middle_down && !buffered_rotate_key);
+        test_foreground = 1; zoom_enabled = 1;
+        rotate_enabled = 0; mouse_middle_event = 1; count = 8;
+        wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert(count == 1 && events[0].dwOfs == 14 && !middle_down);
+        rotate_enabled = 1;
+        wheel_set_notification(&keyboard,NULL); CloseHandle(ready);
+        puts("PASS: middle-button rotation, state/buffered reads, PEEK, held drag, physical X, full buffers, focus release and independent settings.");
+    }
     if (argc == 2) test_real_wrapper(argv[1], &mouse_id, &keyboard_id);
     return 0;
 }
