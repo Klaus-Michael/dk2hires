@@ -11,7 +11,7 @@
 # Vorher werden die alten Registry-Werte und ein SHA-256-Manifest des Spielordners gesichert.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Resolution,
+    [Parameter(Mandatory = $true)][Alias('res')][string]$Resolution,
     [string]$GameDir,
     [string]$StateDir,
     [switch]$DryRun,
