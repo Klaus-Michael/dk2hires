@@ -11,6 +11,8 @@ static DWORD wheel_now(void) { return test_now; }
 static int wheel_foreground(void) { return test_foreground; }
 #define WHEEL_TEST
 #include "wheelzoom.c"
+static int camera_rebuilds;
+void __cdecl cp_rebuild(void *camera) { (void)camera; camera_rebuilds++; }
 static int test_timer_armed;
 static int arm_notification_timer(void) { test_timer_armed = 1; return 1; }
 static void pause_notification_timer(void) { test_timer_armed = 0; }
@@ -149,6 +151,7 @@ int main(int argc, char **argv) {
     GUID keyboard_id = mouse_id;
     void *input, *dev;
     BYTE data[256];
+    pitch_enabled = 0; /* Preserve existing rotation-speed regression coverage. */
     keyboard_id.Data1++;
     InitializeCriticalSection(&wheel_cs);
     input_vtable[3] = fake_create_device;
@@ -392,6 +395,89 @@ int main(int argc, char **argv) {
         assert(scale_rotation(2147483647L,&fraction) == 2147483647L);
         rotate_speed_percent = 50; clear_motion();
         puts("PASS: rotation speed defaults to 50%, both axes, fractional motion, event ordering, PEEK, unmodified normal movement/wheel/buttons, configurable speed and overflow.");
+    }
+    {
+        BYTE camera[0xed2] = {0};
+        LONG state[4];
+        DIDEVICEOBJECTDATA events[8];
+        DWORD count;
+        clear_motion(); buffered_zoom_key = buffered_rotate_key = 0;
+        memset(buffered_keys,0,sizeof(buffered_keys));
+        memset(physical_keys,0,sizeof(physical_keys));
+        *(int *)(camera + 0xda8) = 3;
+        *(WORD *)(camera + 0xd86) = 200;
+        *(WORD *)(camera + 0xd84) = 333; /* Horizontal orientation must survive. */
+        pitch_enabled = 1;
+        mouse_middle = 1; mouse_x = 12; mouse_y = -8;
+        wheel_get_state(&mouse,sizeof(state),state); keys(data);
+        assert(state[0] == 6 && state[1] == 0 && data[ROTATE_KEY]);
+        /* Regression: a diagonal drag must never introduce Ctrl/Home/End. */
+        assert(!data[0x1d] && !data[HOME_KEY] && !data[END_KEY]);
+        cp_apply(camera);
+        assert(*(WORD *)(camera + 0xd86) == 196 && *(WORD *)(camera + 0xd84) == 333);
+        assert(camera_rebuilds == 1 && !pitch_pending);
+        cp_apply(camera); assert(camera_rebuilds == 1); /* Exactly once per movement. */
+        mouse_x = mouse_y = 0;
+        /* Buffered-only diagonal motion: both axes in the same input batch. */
+        mouse_events[0].dwOfs = 0; mouse_events[0].dwData = 10;
+        mouse_events[1].dwOfs = 4; mouse_events[1].dwData = 12;
+        mouse_event_count = 2;
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,DIGDD_PEEK);
+        assert(events[0].dwData == 5 && !events[1].dwData && !pitch_pending);
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert(events[0].dwData == 5 && !events[1].dwData && pitch_pending == 6);
+        count = 8; wheel_get_data(&keyboard,sizeof(events[0]),events,&count,0);
+        assert(count == 1 && events[0].dwOfs == ROTATE_KEY);
+        cp_apply(camera); assert(*(WORD *)(camera + 0xd86) == 202);
+        pitch_invert = 1; queue_pitch(6); cp_apply(camera);
+        assert(*(WORD *)(camera + 0xd86) == 196); pitch_invert = 0;
+        pitch_speed_percent = 50; queue_pitch(1); assert(!pitch_pending);
+        queue_pitch(1); cp_apply(camera); assert(*(WORD *)(camera + 0xd86) == 197);
+        pitch_speed_percent = 100;
+        queue_pitch(100000); cp_apply(camera); assert(*(WORD *)(camera + 0xd86) == 460);
+        queue_pitch(-100000); cp_apply(camera); assert(*(WORD *)(camera + 0xd86) == 0);
+        queue_pitch(20); queue_middle(0,1); cp_apply(camera);
+        assert(*(WORD *)(camera + 0xd86) == 0); /* No stale motion after release. */
+        queue_middle(1,1); queue_pitch(20); test_foreground = 0; cp_apply(camera);
+        assert(*(WORD *)(camera + 0xd86) == 0 && !pitch_pending); test_foreground = 1;
+        *(int *)(camera + 0xda8) = 7; queue_pitch(20); cp_apply(camera);
+        assert(*(WORD *)(camera + 0xd86) == 0); /* Possession excluded. */
+        *(int *)(camera + 0xda8) = 3; *(DWORD *)(camera + 0xdd8) = 1;
+        queue_pitch(20); cp_apply(camera); assert(*(WORD *)(camera + 0xd86) == 0);
+        *(DWORD *)(camera + 0xdd8) = 0; *(WORD *)(camera + 0xe48) = 1;
+        queue_pitch(20); cp_apply(camera); assert(*(WORD *)(camera + 0xd86) == 0);
+        clear_motion(); mouse_middle = 0; pitch_enabled = 0;
+        puts("PASS: diagonal drag preserves X without Ctrl/zoom keys; direct pitch, render consumption, limits, scaling, inversion, focus/release and camera locks.");
+    }
+    {
+        LONG state[4], fraction = 0;
+        DIDEVICEOBJECTDATA events[8];
+        DWORD count;
+        clear_motion(); rotate_invert = 1;
+        mouse_middle = 1; mouse_x = 10; mouse_y = 6;
+        wheel_get_state(&mouse,sizeof(state),state);
+        assert(state[0] == -5 && state[1] == 3);
+        mouse_events[0].dwOfs = 0; mouse_events[0].dwData = (DWORD)-10;
+        mouse_events[1].dwOfs = 4; mouse_events[1].dwData = 6;
+        mouse_event_count = 2;
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,DIGDD_PEEK);
+        assert((LONG)events[0].dwData == 5 && events[1].dwData == 3 && mouse_event_count == 2);
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert((LONG)events[0].dwData == 5 && events[1].dwData == 3);
+        assert(horizontal_rotation(1,&fraction) == 0);
+        assert(horizontal_rotation(1,&fraction) == -1 && !fraction);
+        assert(horizontal_rotation(-1,&fraction) == 0);
+        assert(horizontal_rotation(-1,&fraction) == 1 && !fraction);
+        mouse_middle = 0;
+        wheel_get_state(&mouse,sizeof(state),state);
+        assert(state[0] == 10 && state[1] == 6); /* Normal pointer unchanged. */
+        mouse_events[0].dwOfs = 0; mouse_events[0].dwData = 10; mouse_event_count = 1;
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert(events[0].dwData == 10);
+        rotate_speed_percent = 200;
+        assert(horizontal_rotation((-2147483647L-1),&fraction) == 2147483647L);
+        rotate_speed_percent = 50; rotate_invert = 0; mouse_x = mouse_y = 0;
+        puts("PASS: horizontal inversion in state/buffered input and PEEK, both signs, fractional motion, unchanged vertical axis/pointer and overflow.");
     }
     if (argc == 2) test_real_wrapper(argv[1], &mouse_id, &keyboard_id);
     return 0;

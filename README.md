@@ -123,6 +123,27 @@ simulierte Taste ebenfalls frei. Die physische X-Taste bleibt verwendbar.
 25 = ein Viertel. Erlaubt sind Werte von 1 bis 200. Die Skalierung betrifft
 nur Mausbewegungen beim Halten der mittleren Maustaste; beide Achsen werden
 angepasst. Kleine Bewegungen werden ohne Rundungsverlust gesammelt.
+`MiddleMouseRotateInvert=1` kehrt nur die horizontale MMB-Drehrichtung um;
+`0` ist die bisherige Richtung (Standard). Neigung und normale Mausbewegungen
+bleiben davon unabhaengig. Nach einer Aenderung das Spiel neu starten.
+
+Vertikale Neigung: `MiddleMousePitch=1` (Standard) passt die Kameraneigung
+direkt auf dem Render-Thread an. Die vorherige Ctrl+Home/End-Umsetzung hat
+bei diagonalen Bewegungen die X-Belegung fuer horizontales Drehen blockiert
+und wurde entfernt. Es werden keine zusaetzlichen Ctrl-/Zoomtasten simuliert.
+`MiddleMousePitchSpeed=100` setzt einen zusaetzlichen Neigungsfaktor in Prozent
+(1..200); 50 halbiert die Neigung. `MiddleMousePitchInvert=1` kehrt die Richtung
+um. `MiddleMouseRotateSpeed` beeinflusst beide Achsen. Die alte Option
+`MiddleMousePitchMs` wird nicht mehr verwendet. `MiddleMousePitch=0` schaltet
+die Neigung ab. Die neue Umsetzung ist noch durch einen Benutzertest zu pruefen.
+
+Der Hook bei 0x0059896b erhaelt die aktuelle CCamera vor dem Aufbau der Ansicht,
+aendert nur den Neigungswinkel bei +0xd86 und ruft den vorhandenen Matrixaufbau
+bei 0x0044d6d0 auf. Die Grenze 0..460 entspricht der Spielroutine 0x00449d40;
+Besessenheit, Kamerafahrten, Uebergaenge und Eingabesperren bleiben ausgenommen.
+Originalbytes werden vor Installation beider Adressen geprueft. Loslassen und
+Fokusverlust verwerfen ausstehende Bewegungen. Im Log steht
+`middlepitch: aktiv (direkter Kamera-Hook)`.
 
 Voraussetzungen: Linux, bash, Python 3, coreutils, findutils, diffutils, grep, sed. Das Spiel muss einmal
 gestartet worden sein, damit sein Wine-Prefix existiert, und beim Einspielen beendet sein.

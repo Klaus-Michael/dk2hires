@@ -5,6 +5,29 @@
 #endif
 extern DWORD cf_ret_cine, cf_ret_dist, cf_ret_focal, hf_ret;
 extern DWORD tf_ret_create, tf_ret_upload, tf_ret_draw;
+extern DWORD cp_ret;
+void __cdecl cp_apply(void *camera);
+__declspec(naked) void cp_stub(void) {
+    __asm {
+        pushfd
+        pushad
+        push ebx
+        call cp_apply
+        add esp, 4
+        popad
+        popfd
+        fild dword ptr [ebx + 0e62h]
+        jmp dword ptr [cp_ret]
+    }
+}
+__declspec(naked) void cp_rebuild(void *camera) {
+    __asm {
+        mov ecx, dword ptr [esp + 4]
+        mov eax, 0044d6d0h
+        call eax
+        ret
+    }
+}
 DWORD __cdecl cf_cine_width(void);
 DWORD __cdecl cf_dist_width(void);
 DWORD __cdecl cf_focal_const(void);

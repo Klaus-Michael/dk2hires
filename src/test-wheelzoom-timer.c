@@ -7,6 +7,7 @@ static int wheel_foreground(void) { return 1; }
 #define WHEEL_TEST
 #define WHEEL_REAL_TIMER
 #include "wheelzoom.c"
+void __cdecl cp_rebuild(void *camera) { (void)camera; }
 void dk_log(const char *fmt, ...) { (void)fmt; }
 void *iat_hook(const char *dll, const char *func, void *repl) { (void)dll; (void)func; (void)repl; return NULL; }
 int main(void) {

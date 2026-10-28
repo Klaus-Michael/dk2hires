@@ -26,7 +26,13 @@ static DWORD zoom_ms = 80;
 static int inverted, remainder, direction;
 static int zoom_enabled = 1, rotate_enabled = 1, middle_down, buffered_rotate_key;
 static int rotate_speed_percent = 50;
+static int rotate_invert;
 static LONG rotate_remainder[2];
+static int pitch_enabled = 1, pitch_invert, pitch_speed_percent = 100;
+static LONG pitch_pending, pitch_fraction;
+DWORD cp_ret = 0x00598971;
+void cp_stub(void);
+void __cdecl cp_rebuild(void *camera);
 static DWORD remaining_until;
 static BYTE buffered_keys[256];
 static int buffered_zoom_key;
@@ -54,6 +60,7 @@ static int wheel_foreground(void) {
 static void clear_zoom(void) { direction = 0; remainder = 0; }
 static void clear_motion(void) {
     clear_zoom(); middle_down = 0;
+    pitch_pending = pitch_fraction = 0;
     rotate_remainder[0] = rotate_remainder[1] = 0;
 }
 /* Keep sub-count motion so slow drags do not disappear at reduced speeds.
@@ -66,14 +73,64 @@ static LONG scale_rotation(LONG delta, LONG *fraction) {
     if (scaled < (-2147483647LL - 1)) return (-2147483647L - 1);
     return (LONG)scaled;
 }
+static LONG horizontal_rotation(LONG delta, LONG *fraction) {
+    LONG scaled = scale_rotation(delta, fraction);
+    if (!rotate_invert) return scaled;
+    return scaled == (-2147483647L - 1) ? 2147483647L : -scaled;
+}
 static void queue_middle(int down, int foreground) {
     int desired = rotate_enabled && foreground && down;
     if (desired == middle_down) return;
     middle_down = desired;
+    if (!desired) pitch_pending = pitch_fraction = 0;
     rotate_remainder[0] = rotate_remainder[1] = 0;
     if (!arm_notification_timer()) middle_down = 0;
     wake_keyboards();
 }
+/* Queue angle units, not Ctrl shortcuts: Ctrl changes the game's X binding
+ * and breaks horizontal rotation during a diagonal drag. Consume on the
+ * render thread once the engine supplies its current camera object. */
+static void queue_pitch(LONG delta) {
+    LONGLONG total, pending;
+    if (!pitch_enabled || !middle_down) return;
+    total = (LONGLONG)delta * pitch_speed_percent * (pitch_invert ? -1 : 1) + pitch_fraction;
+    pending = (LONGLONG)pitch_pending + total / 100;
+    pitch_fraction = (LONG)(total % 100);
+    if (pending > 460) pending = 460;
+    if (pending < -460) pending = -460;
+    pitch_pending = (LONG)pending;
+}
+void __cdecl cp_apply(void *camera) {
+    BYTE *bytes = (BYTE *)camera;
+    LONG delta;
+    int mode, angle;
+    EnterCriticalSection(&wheel_cs);
+    delta = pitch_pending; pitch_pending = 0;
+    if (!pitch_enabled || !middle_down || !wheel_foreground()) delta = 0;
+    LeaveCriticalSection(&wheel_cs);
+    if (!delta || !camera) return;
+    mode = *(int *)(bytes + 0xda8);
+    /* Keeper presets/user views only; exclude possession and cinematics.
+     * Respect the game's transition lock and input lock. */
+    if (mode < 0 || mode > 6 || *(DWORD *)(bytes + 0xdd8) || *(WORD *)(bytes + 0xe48)) return;
+    angle = *(WORD *)(bytes + 0xd86) + delta;
+    if (angle < 0) angle = 0;
+    if (angle > 460) angle = 460; /* Same pitch bounds as CCamera::449D40. */
+    if (*(WORD *)(bytes + 0xd86) != angle) {
+        *(WORD *)(bytes + 0xd86) = (WORD)angle;
+        cp_rebuild(camera);
+    }
+}
+#if !defined(_MSC_VER) && !defined(WHEEL_TEST)
+__asm__(
+    ".intel_syntax noprefix\n"
+    ".globl _cp_stub\n_cp_stub:\n"
+    "pushfd\npushad\npush ebx\ncall _cp_apply\nadd esp, 4\npopad\npopfd\n"
+    "fild dword ptr [ebx + 0xe62]\njmp dword ptr [_cp_ret]\n"
+    ".globl _cp_rebuild\n_cp_rebuild:\n"
+    "mov ecx, dword ptr [esp + 4]\nmov eax, 0x0044d6d0\ncall eax\nret\n"
+    ".att_syntax prefix\n");
+#endif
 /* DirectInput signals this same event for physical keys. The game does not
  * call GetDeviceData until notified, so synthetic buffered events need it too.
  * Callbacks and device-handle replacement are serialized by wheel_cs. */
@@ -168,8 +225,9 @@ static HRESULT WINAPI wheel_get_state(void *object, DWORD size, void *data) {
             queue_middle((((BYTE *)data)[14] & 0x80) != 0, foreground);
             ((BYTE *)data)[14] = 0;
             if (middle_down) {
-                ((LONG *)data)[0] = scale_rotation(((LONG *)data)[0], &rotate_remainder[0]);
+                ((LONG *)data)[0] = horizontal_rotation(((LONG *)data)[0], &rotate_remainder[0]);
                 ((LONG *)data)[1] = scale_rotation(((LONG *)data)[1], &rotate_remainder[1]);
+                if (pitch_enabled) { queue_pitch(((LONG *)data)[1]); ((LONG *)data)[1] = 0; }
             }
         }
     } else if (data && kind == 2 && size == 256) {
@@ -231,7 +289,13 @@ static HRESULT WINAPI wheel_get_data(void *object, DWORD size, void *data, DWORD
                 drag = down;
                 if (!peek) queue_middle(down, foreground);
             } else if (drag && (event[0] == 0 || event[0] == 4)) {
-                event[1] = (DWORD)scale_rotation((LONG)event[1], &fractions[event[0] / 4]);
+                event[1] = (DWORD)(event[0] == 0
+                    ? horizontal_rotation((LONG)event[1], &fractions[0])
+                    : scale_rotation((LONG)event[1], &fractions[1]));
+                if (event[0] == 4 && pitch_enabled) {
+                    if (!peek) queue_pitch((LONG)event[1]);
+                    event[1] = 0;
+                }
             }
         }
     }
@@ -435,9 +499,15 @@ static HRESULT WINAPI wheel_create_input(HINSTANCE instance, DWORD version, void
 int wheelzoom_install(const char *ini) {
     zoom_enabled = GetPrivateProfileIntA("fix", "MouseWheelZoom", 1, ini) != 0;
     rotate_enabled = GetPrivateProfileIntA("fix", "MiddleMouseRotate", 1, ini) != 0;
+    rotate_invert = GetPrivateProfileIntA("fix", "MiddleMouseRotateInvert", 0, ini) != 0;
     rotate_speed_percent = (int)GetPrivateProfileIntA("fix", "MiddleMouseRotateSpeed", 50, ini);
     if (rotate_speed_percent < 1) rotate_speed_percent = 1;
     if (rotate_speed_percent > 200) rotate_speed_percent = 200;
+    pitch_enabled = GetPrivateProfileIntA("fix", "MiddleMousePitch", 1, ini) != 0;
+    pitch_invert = GetPrivateProfileIntA("fix", "MiddleMousePitchInvert", 0, ini) != 0;
+    pitch_speed_percent = (int)GetPrivateProfileIntA("fix", "MiddleMousePitchSpeed", 100, ini);
+    if (pitch_speed_percent < 1) pitch_speed_percent = 1;
+    if (pitch_speed_percent > 200) pitch_speed_percent = 200;
     if (!zoom_enabled && !rotate_enabled) return 0;
     zoom_ms = GetPrivateProfileIntA("fix", "WheelZoomMs", 80, ini);
     if (zoom_ms < 20) zoom_ms = 20;
@@ -446,7 +516,20 @@ int wheelzoom_install(const char *ini) {
     InitializeCriticalSection(&wheel_cs);
     real_create_input = (create_input_fn)iat_hook("dinput.dll", "DirectInputCreateA", (void *)wheel_create_input);
     if (!real_create_input) { dk_log("wheelzoom: DirectInput-Import nicht gefunden"); return 0; }
+#ifndef WHEEL_TEST
+    if (pitch_enabled) {
+        static const BYTE site[] = {0xdb,0x83,0x62,0x0e,0,0};
+        static const BYTE rebuild[] = {0x83,0xec,0x50,0x53,0x55,0x8b,0xe9,0x33,0xc0};
+        if (!bytes_match(0x0059896b,site,sizeof(site)) ||
+            !bytes_match(0x0044d6d0,rebuild,sizeof(rebuild)) ||
+            !write_jmp(0x0059896b,(DWORD)cp_stub,sizeof(site))) {
+            pitch_enabled = 0;
+            dk_log("middlepitch: Kamera-Hook passt nicht, Neigung deaktiviert");
+        }
+    }
+#endif
     if (zoom_enabled) dk_log("wheelzoom: aktiv, %lu ms pro Rastung%s", zoom_ms, inverted ? " (invertiert)" : "");
-    dk_log("middlerotate: %s (X), Geschwindigkeit %d%%", rotate_enabled ? "aktiv" : "aus", rotate_speed_percent);
+    dk_log("middlerotate: %s (X), Geschwindigkeit %d%%%s", rotate_enabled ? "aktiv" : "aus", rotate_speed_percent, rotate_invert ? " (invertiert)" : "");
+    dk_log("middlepitch: %s (direkter Kamera-Hook), Geschwindigkeit %d%%", pitch_enabled ? "aktiv" : "aus", pitch_speed_percent);
     return 1;
 }
