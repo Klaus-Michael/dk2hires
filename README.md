@@ -118,6 +118,12 @@ simulierte Taste ebenfalls frei. Die physische X-Taste bleibt verwendbar.
 `MiddleMouseRotate=0` schaltet sie ab. Sie funktioniert unabhaengig von
 `MouseWheelZoom`. Nach einer Aenderung das Spiel neu starten.
 
+`MiddleMouseRotateSpeed=50` stellt die Drehgeschwindigkeit in Prozent ein:
+50 = halbe Geschwindigkeit (Standard), 100 = bisherige Geschwindigkeit,
+25 = ein Viertel. Erlaubt sind Werte von 1 bis 200. Die Skalierung betrifft
+nur Mausbewegungen beim Halten der mittleren Maustaste; beide Achsen werden
+angepasst. Kleine Bewegungen werden ohne Rundungsverlust gesammelt.
+
 Voraussetzungen: Linux, bash, Python 3, coreutils, findutils, diffutils, grep, sed. Das Spiel muss einmal
 gestartet worden sein, damit sein Wine-Prefix existiert, und beim Einspielen beendet sein.
 

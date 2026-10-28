@@ -19,6 +19,9 @@ void *iat_hook(const char *dll, const char *func, void *repl) { (void)dll; (void
 typedef struct { void **table; int kind; } fake_device;
 static LONG mouse_delta;
 static int mouse_middle, mouse_middle_event = -1;
+static LONG mouse_x, mouse_y;
+static DIDEVICEOBJECTDATA mouse_events[8];
+static DWORD mouse_event_count;
 static HRESULT read_result = S_OK;
 static BYTE physical_keys[256];
 static int mouse_reads, keyboard_reads;
@@ -28,7 +31,7 @@ static HRESULT WINAPI fake_state(void *obj, DWORD size, void *data) {
     fake_device *device = obj;
     if (FAILED(read_result)) return read_result;
     memset(data, 0, size);
-    if (device->kind == 1) { ((LONG *)data)[2] = mouse_delta; ((BYTE *)data)[14] = mouse_middle ? 0x80 : 0; mouse_delta = 0; mouse_reads++; }
+    if (device->kind == 1) { ((LONG *)data)[0] = mouse_x; ((LONG *)data)[1] = mouse_y; ((LONG *)data)[2] = mouse_delta; ((BYTE *)data)[14] = mouse_middle ? 0x80 : 0; mouse_delta = 0; mouse_reads++; }
     else { memcpy(data, physical_keys, size); keyboard_reads++; }
     return S_OK;
 }
@@ -40,7 +43,14 @@ static HRESULT WINAPI fake_data(void *obj, DWORD size, void *data, DWORD *count,
     DIDEVICEOBJECTDATA event = {0};
     assert(size == sizeof(event));
     *count = 0;
-    if (device->kind == 1 && mouse_middle_event >= 0 && data && capacity) {
+    if (device->kind == 1 && mouse_event_count && data && capacity) {
+        DWORD amount = mouse_event_count < capacity ? mouse_event_count : capacity;
+        memcpy(data, mouse_events, amount * size); *count = amount;
+        if (!(flags & DIGDD_PEEK)) {
+            mouse_event_count -= amount;
+            memmove(mouse_events, mouse_events + amount, mouse_event_count * size);
+        }
+    } else if (device->kind == 1 && mouse_middle_event >= 0 && data && capacity) {
         event.dwOfs = 14; event.dwData = mouse_middle_event ? 0x80 : 0;
         memcpy(data, &event, size); *count = 1;
         if (!(flags & DIGDD_PEEK)) mouse_middle_event = -1;
@@ -326,6 +336,62 @@ int main(int argc, char **argv) {
         rotate_enabled = 1;
         wheel_set_notification(&keyboard,NULL); CloseHandle(ready);
         puts("PASS: middle-button rotation, state/buffered reads, PEEK, held drag, physical X, full buffers, focus release and independent settings.");
+    }
+    {
+        DIDEVICEOBJECTDATA events[8];
+        DWORD count;
+        LONG state[4];
+        LONG fraction = 0;
+        clear_motion();
+        assert(rotate_speed_percent == 50);
+        assert(scale_rotation(1,&fraction) == 0);
+        assert(scale_rotation(1,&fraction) == 1 && fraction == 0);
+        assert(scale_rotation(-1,&fraction) == 0);
+        assert(scale_rotation(-1,&fraction) == -1 && fraction == 0);
+        mouse_x = 9; mouse_y = -5; mouse_middle = 1;
+        wheel_get_state(&mouse,sizeof(state),state);
+        assert(state[0] == 4 && state[1] == -2);
+        wheel_get_state(&mouse,sizeof(state),state);
+        assert(state[0] == 5 && state[1] == -3);
+        mouse_middle = 0;
+        wheel_get_state(&mouse,sizeof(state),state);
+        assert(state[0] == 9 && state[1] == -5);
+        mouse_x = mouse_y = 0;
+        /* Button changes and motion in one buffer are processed in order. */
+        memset(mouse_events,0,sizeof(mouse_events));
+        mouse_events[0].dwOfs = 14; mouse_events[0].dwData = 0x80;
+        mouse_events[1].dwOfs = 0; mouse_events[1].dwData = 1;
+        mouse_events[2].dwOfs = 0; mouse_events[2].dwData = 1;
+        mouse_events[3].dwOfs = 4; mouse_events[3].dwData = (DWORD)-6;
+        mouse_events[4].dwOfs = 14;
+        mouse_events[5].dwOfs = 0; mouse_events[5].dwData = 8;
+        mouse_events[6].dwOfs = 8; mouse_events[6].dwData = 60;
+        mouse_events[7].dwOfs = 12; mouse_events[7].dwData = 0x80;
+        mouse_event_count = 8;
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,DIGDD_PEEK);
+        assert(count == 6 && !middle_down && mouse_event_count == 8);
+        assert(events[0].dwData == 0 && events[1].dwData == 1 && (LONG)events[2].dwData == -3);
+        assert(events[3].dwData == 8 && events[4].dwData == 60 && events[5].dwOfs == 12);
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert(count == 6 && events[1].dwData == 1 && !mouse_event_count && !middle_down);
+        /* Repeated peeks do not consume fractional motion. */
+        queue_middle(1,1);
+        mouse_events[0].dwOfs = 0; mouse_events[0].dwData = 1; mouse_event_count = 1;
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert(events[0].dwData == 0 && rotate_remainder[0] == 50);
+        mouse_event_count = 1;
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,DIGDD_PEEK);
+        assert(events[0].dwData == 1 && rotate_remainder[0] == 50);
+        count = 8; wheel_get_data(&mouse,sizeof(events[0]),events,&count,0);
+        assert(events[0].dwData == 1 && rotate_remainder[0] == 0);
+        rotate_speed_percent = 100; fraction = 0;
+        assert(scale_rotation(-123,&fraction) == -123);
+        rotate_speed_percent = 25;
+        assert(scale_rotation(8,&fraction) == 2);
+        rotate_speed_percent = 200;
+        assert(scale_rotation(2147483647L,&fraction) == 2147483647L);
+        rotate_speed_percent = 50; clear_motion();
+        puts("PASS: rotation speed defaults to 50%, both axes, fractional motion, event ordering, PEEK, unmodified normal movement/wheel/buttons, configurable speed and overflow.");
     }
     if (argc == 2) test_real_wrapper(argv[1], &mouse_id, &keyboard_id);
     return 0;

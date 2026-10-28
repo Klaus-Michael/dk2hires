@@ -25,6 +25,8 @@ static create_input_fn real_create_input;
 static DWORD zoom_ms = 80;
 static int inverted, remainder, direction;
 static int zoom_enabled = 1, rotate_enabled = 1, middle_down, buffered_rotate_key;
+static int rotate_speed_percent = 50;
+static LONG rotate_remainder[2];
 static DWORD remaining_until;
 static BYTE buffered_keys[256];
 static int buffered_zoom_key;
@@ -50,11 +52,25 @@ static int wheel_foreground(void) {
 
 /* Caller holds wheel_cs. Unsigned time subtraction handles tick-count wrap. */
 static void clear_zoom(void) { direction = 0; remainder = 0; }
-static void clear_motion(void) { clear_zoom(); middle_down = 0; }
+static void clear_motion(void) {
+    clear_zoom(); middle_down = 0;
+    rotate_remainder[0] = rotate_remainder[1] = 0;
+}
+/* Keep sub-count motion so slow drags do not disappear at reduced speeds.
+ * 64-bit multiplication also handles the full signed DirectInput delta range. */
+static LONG scale_rotation(LONG delta, LONG *fraction) {
+    LONGLONG total = (LONGLONG)delta * rotate_speed_percent + *fraction;
+    LONGLONG scaled = total / 100;
+    *fraction = (LONG)(total % 100);
+    if (scaled > 2147483647LL) return 2147483647L;
+    if (scaled < (-2147483647LL - 1)) return (-2147483647L - 1);
+    return (LONG)scaled;
+}
 static void queue_middle(int down, int foreground) {
     int desired = rotate_enabled && foreground && down;
     if (desired == middle_down) return;
     middle_down = desired;
+    rotate_remainder[0] = rotate_remainder[1] = 0;
     if (!arm_notification_timer()) middle_down = 0;
     wake_keyboards();
 }
@@ -151,6 +167,10 @@ static HRESULT WINAPI wheel_get_state(void *object, DWORD size, void *data) {
         if (rotate_enabled) {
             queue_middle((((BYTE *)data)[14] & 0x80) != 0, foreground);
             ((BYTE *)data)[14] = 0;
+            if (middle_down) {
+                ((LONG *)data)[0] = scale_rotation(((LONG *)data)[0], &rotate_remainder[0]);
+                ((LONG *)data)[1] = scale_rotation(((LONG *)data)[1], &rotate_remainder[1]);
+            }
         }
     } else if (data && kind == 2 && size == 256) {
         if (SUCCEEDED(result)) {
@@ -174,7 +194,8 @@ static HRESULT WINAPI wheel_get_data(void *object, DWORD size, void *data, DWORD
     table_t *table;
     get_data_fn original;
     DWORD capacity = count ? *count : 0, received, i, now, sequence;
-    int kind, foreground, desired, key, physical_home, physical_end;
+    int kind, foreground, desired, key, physical_home, physical_end, drag;
+    LONG fractions[2];
     int peek = (flags & 1) != 0;
     BYTE physical[256];
     HRESULT result;
@@ -195,14 +216,27 @@ static HRESULT WINAPI wheel_get_data(void *object, DWORD size, void *data, DWORD
     }
     received = *count;
     sequence = event_sequence;
+    drag = middle_down;
+    fractions[0] = rotate_remainder[0]; fractions[1] = rotate_remainder[1];
     for (i = 0; i < received; i++) {
         DWORD *event = (DWORD *)((BYTE *)data + i * size);
         if ((LONG)(event[3] - sequence) > 0) sequence = event[3];
         if (kind == 1 && event[0] == 8 && !peek) {
             queue_wheel((LONG)event[1], now, foreground);
         }
-        if (kind == 1 && event[0] == 14 && rotate_enabled && !peek)
-            queue_middle((event[1] & 0x80) != 0, foreground);
+        if (kind == 1 && rotate_enabled) {
+            if (event[0] == 14) {
+                int down = foreground && (event[1] & 0x80) != 0;
+                if (drag != down) fractions[0] = fractions[1] = 0;
+                drag = down;
+                if (!peek) queue_middle(down, foreground);
+            } else if (drag && (event[0] == 0 || event[0] == 4)) {
+                event[1] = (DWORD)scale_rotation((LONG)event[1], &fractions[event[0] / 4]);
+            }
+        }
+    }
+    if (kind == 1 && !peek) {
+        rotate_remainder[0] = fractions[0]; rotate_remainder[1] = fractions[1];
     }
     /* Consume the mapped mouse button, leaving movement/wheel/other buttons intact. */
     if (kind == 1 && rotate_enabled) {
@@ -401,6 +435,9 @@ static HRESULT WINAPI wheel_create_input(HINSTANCE instance, DWORD version, void
 int wheelzoom_install(const char *ini) {
     zoom_enabled = GetPrivateProfileIntA("fix", "MouseWheelZoom", 1, ini) != 0;
     rotate_enabled = GetPrivateProfileIntA("fix", "MiddleMouseRotate", 1, ini) != 0;
+    rotate_speed_percent = (int)GetPrivateProfileIntA("fix", "MiddleMouseRotateSpeed", 50, ini);
+    if (rotate_speed_percent < 1) rotate_speed_percent = 1;
+    if (rotate_speed_percent > 200) rotate_speed_percent = 200;
     if (!zoom_enabled && !rotate_enabled) return 0;
     zoom_ms = GetPrivateProfileIntA("fix", "WheelZoomMs", 80, ini);
     if (zoom_ms < 20) zoom_ms = 20;
@@ -410,6 +447,6 @@ int wheelzoom_install(const char *ini) {
     real_create_input = (create_input_fn)iat_hook("dinput.dll", "DirectInputCreateA", (void *)wheel_create_input);
     if (!real_create_input) { dk_log("wheelzoom: DirectInput-Import nicht gefunden"); return 0; }
     if (zoom_enabled) dk_log("wheelzoom: aktiv, %lu ms pro Rastung%s", zoom_ms, inverted ? " (invertiert)" : "");
-    dk_log("middlerotate: %s (X)", rotate_enabled ? "aktiv" : "aus");
+    dk_log("middlerotate: %s (X), Geschwindigkeit %d%%", rotate_enabled ? "aktiv" : "aus", rotate_speed_percent);
     return 1;
 }
