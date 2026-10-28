@@ -32,6 +32,7 @@ DWORD __cdecl hf_decide(void)
 }
 
 void hf_stub(void);
+#ifndef _MSC_VER
 __asm__(
     ".intel_syntax noprefix\n"
     ".globl _hf_stub\n"
@@ -41,6 +42,7 @@ __asm__(
     "    jmp dword ptr [_hf_ret]\n"
     ".att_syntax prefix\n"
 );
+#endif
 
 static DWORD reg_dword(const char *name, DWORD def)
 {

@@ -85,6 +85,30 @@ logischen CPU-Kern auf. Die Einstellung hat das starke Ruckeln bei 2560x1440 auf
 einem Core i9-13900K mit GeForce RTX 5090 behoben. Falls dadurch Probleme auftreten,
 die Zeile wieder entfernen und das Spiel neu starten.
 
+Die lokale Erweiterung unterstuetzt auch Mausrad-Zoom: vorwaerts zum Hineinzoomen,
+rueckwaerts zum Herauszoomen. Sie verwendet die vorhandenen Home/End-Zoomfunktionen
+und damit auch die eingestellten Zoomgrenzen. Der vorhandene `dinput.dll`-Wrapper
+bleibt erhalten; ein zusaetzliches Hintergrundprogramm ist nicht erforderlich.
+Die Erweiterung verarbeitet sowohl gepufferte DirectInput-Ereignisse im Spiel
+als auch Zustandsabfragen bei der Initialisierung.
+Mausrad-Zoom signalisiert die Tastatur-Eingabebenachrichtigung sofort; ein kurzer
+Timer liefert auch das Loslassen der Zoomtaste ohne physischen Tastendruck.
+In `dk2hires.ini` neben `DKII-DX.exe` stehen unter `[fix]` diese Optionen:
+
+```ini
+MouseWheelZoom=1
+WheelZoomMs=80
+WheelZoomInvert=0
+```
+
+`WheelZoomMs` bestimmt die Dauer des Zoom-Impulses pro Rastung (20 bis 250 ms).
+Ein kleinerer Wert zoomt langsamer, ein groesserer schneller. `WheelZoomInvert=1`
+kehrt die Richtung um; `MouseWheelZoom=0` schaltet die Erweiterung ab.
+Aenderungen werden nach einem Neustart wirksam. Bei gedrueckter Strg-, Umschalt-
+oder Alt-Taste wird kein Mausrad-Zoom erzeugt, damit Kamera-Tastenkombinationen
+nicht versehentlich ausgeloest werden. Im Log bestaetigen `wheelzoom: aktiv`,
+`wheelzoom: Maus eingebunden` und `wheelzoom: Tastatur eingebunden` die Initialisierung.
+
 Voraussetzungen: Linux, bash, Python 3, coreutils, findutils, diffutils, grep, sed. Das Spiel muss einmal
 gestartet worden sein, damit sein Wine-Prefix existiert, und beim Einspielen beendet sein.
 
@@ -136,12 +160,22 @@ und die Auflösung im Spiel neu einstellen.
 src/build.sh          # Ergebnis: src/build/dsound.dll
 ```
 
-Gebraucht wird `i686-w64-mingw32-gcc` (MinGW-w64). Mit gcc 15.2.0 und binutils 2.46, so wie sie
-nixpkgs als `pkgsCross.mingw32.buildPackages.gcc` liefert, entsteht genau die mitgelieferte Datei:
+Gebraucht wird `i686-w64-mingw32-gcc` (MinGW-w64). Der urspruengliche Release-Build
+ohne Mausrad-Erweiterung entstand mit gcc 15.2.0 und binutils 2.46 und hatte SHA-256
+`172cd5171b48748a8b6c1988cec158e012966c2f9ef97a9a6f192ea823eb3c24`.
 
-`dsound.dll`: SHA-256 `172cd5171b48748a8b6c1988cec158e012966c2f9ef97a9a6f192ea823eb3c24`
+Die lokale Windows-Fassung mit Mausrad-Zoom wird mit Visual Studio C++ Build Tools
+(x86/x64) und dem Windows SDK gebaut. Der Build fuehrt die automatisierten
+DirectInput-Tests aus; er installiert die DLL nicht automatisch:
 
-Andere Compilerversionen erzeugen eine andere Datei; getestet ist nur die mitgelieferte.
+```powershell
+.\src\build.ps1       # Ergebnis: src\build\dsound.dll
+# Optionaler Integrationstest mit dem vorhandenen Eingabe-Wrapper:
+.\src\build\test-wheelzoom.exe '..\dinput.dll'
+```
+
+Andere Compiler oder Versionen erzeugen eine andere Datei. Die erwartete Pruefsumme
+der mitgelieferten Windows-DLL steht in `install.ps1`.
 
 ## Lizenz
 
