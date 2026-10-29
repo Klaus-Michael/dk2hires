@@ -25,7 +25,7 @@ if (-not $StateDir) { $StateDir = Join-Path $env:LOCALAPPDATA 'dk2hires' }
 
 $EXE_SHA   = 'a5957e8c52b6dee80ddf6cc1d3ea5079aaaad4d11b40e0f067d34ff4157ce9bb'  # DKII-DX.exe, GOG 1.7
 $PATCH_SHA = '0022e3aaf419f22c3287fb454e9e671ee249f1eefc652465bec96ecfd38f00c4' # patch.dll (GOG)
-$DLL_SHA   = '42869d2b136ed687ff8d4cfe6856cdd1db1d69eda407a56527a26b731489ffe7' # dsound.dll (Windows: MMB-Drehung mit Richtungsoption und direkter Neigung)
+$DLL_SHA   = 'cff8d966e1f152b27380c615790eab732883c8041aa0ab25eca88fcac6d7e9c7' # dsound.dll (Windows: MMB-Kamera und skalierbares unteres HUD)
 $REGKEY    = 'HKCU:\Software\Bullfrog Productions Ltd\Dungeon Keeper II\Configuration\Video'
 $DLL_SRC   = Join-Path $HERE 'dsound.dll'
 $INI_SRC   = Join-Path $HERE 'dk2hires.ini'

@@ -190,6 +190,72 @@ Von Hand: die drei Dateien aus dem Spielordner löschen, in `user.reg` des Prefi
 `[Software\\Wine\\AppDefaults\\DKII-DX.exe\\DllOverrides]` entfernen, während das Spiel nicht läuft,
 und die Auflösung im Spiel neu einstellen.
 
+## Kleineres unteres Ingame-Menue
+
+Die lokale Erweiterung bietet unter `[fix]` in `dk2hires.ini` neben der Spiel-EXE:
+
+```ini
+MenuScale=75
+```
+
+`75` verkleinert Breite und Hoehe des unteren HUD auf 75 Prozent und verankert es
+unten mittig. Erlaubt sind 50 bis 100; `100` stellt die Originalgroesse wieder her.
+Ohne diese Option bleibt die Originalgroesse erhalten. Die Skalierung wirkt nur
+bei mehr als 768 Bildzeilen. Nach einer Aenderung das Spiel neu starten.
+Minimap, Panel-Tabs, Kreaturen-/Raum-/Zauber-/Werkstatt-Buttons und die zum unteren
+HUD gehoerenden Benachrichtigungen werden gemeinsam angepasst. Hauptmenue,
+Escape-Optionen und obere Infozeile behalten ihre Groesse.
+
+Die Laufzeit-Hooks skalieren die fertigen Zeichnungsauftraege und die getrennten
+Trefferbereiche; die urspruenglichen Layoutdaten und Panel-Iconzahlen bleiben
+erhalten. Waehrend untere Fenster und Buttons gezeichnet werden, bleiben deren
+Layout-Rechtecke unveraendert. Erst die Sprite-Ausgabe skaliert Position und
+Groesse gemeinsam, einschliesslich Kreaturenportraets und Ziffern. Die separate
+Kopf-/Trennleiste sowie die texturierten Minimap-Polygone und deren Clip-Rechtecke
+verwenden dieselbe Transformation. Texturkoordinaten bleiben erhalten. So werden
+Teile mit eigener Groessenberechnung nicht mehr ausgelassen oder doppelt skaliert.
+Auch der separat gezeichnete Kamera-Sichtumriss samt Nordmarkierung auf der
+Minimap verwendet dieselbe Skalierung. Hover-Erkennung, Klickpruefung und das
+Rechteck fuer klickbare Bereiche teilen sich die Skalierung der lokalen Insets;
+so bleiben rechts-/unten-ausgerichtete Sell-/Zoom-Buttons und nebeneinander
+liegende Benachrichtigungen einzeln bedienbar.
+Der 3D-Ausschnitt bekommt die frei gewordene Hoehe zurueck. Alle dreizehn Patchstellen
+werden vor Installation auf Originalbytes geprueft. Im Log bestaetigt
+`menufix: aktiv (Renderpfade v4, Minimap-Buttons)` die korrigierte Fassung.
+
+Die vier Minimap-Eckbuttons verwenden wie die quadratische Minimap die Bildhoehe
+fuer horizontale Abstaende und Breiten. Die native ausgeschnittene Hover-Grafik
+bleibt erhalten und passt dadurch auch bei Breitbild zur eingebetteten Iconform.
+Die empfindliche Flaeche nutzt
+die vom echten `CButton::configure` gespeicherten Endkoordinaten; lokale Insets
+werden dort nicht ein zweites Mal addiert. Das korrigiert die nach rechts bzw.
+unten zu grossen Flaechen von Sell/Zoom/Options. Ohne Skalierung gilt das
+Originalverhalten. Tests laden diese vier Button-Konfigurationen direkt aus der
+Spiel-EXE und fuehren die echte Konfigurations- und Zeichenroutine aus.
+Referenz fuer Adressen/Felder: [DiaLight/Flame](https://github.com/DiaLight/Flame),
+Mapping der GOG-Version 1.7. Es wird kein Flame-Code installiert.
+
+Automatisch geprueft mit den echten Geometrieroutinen aus der lokalen Spiel-EXE
+ohne deren Start: 50/75/100 Prozent, niedrige/hohe Aufloesung, Fenster- und
+Button-Trefferbereiche samt lokalen Abstaenden, verschachtelte/rechts-/unten-
+ausgerichtete Controls, Ausschluss des Frontends und 3D-Viewport. Zusaetzlich
+werden die echten Routinen fuer Minimap-Rahmen, Kopf-/Trennleiste,
+Kreaturenportraets und das achtteilige Minimap-Polygon gegen einen aufzeichnenden
+Renderer ausgefuehrt. Dabei werden Endgroesse, Position, Clip-Ruecksetzung,
+unveraenderte Texturkoordinaten und 50/75/100 Prozent bei 4K geprueft. Die erste
+Fassung skalierte nur Button-Rechtecke; der Benutzertest zeigte die fehlenden
+Renderpfade, die diese Tests jetzt abdecken. Der visuelle Ingame-Test der
+korrigierten Fassung steht noch aus. Dabei Tabs wechseln, Raum-/Zauber-Icons anklicken,
+Minimap und deren Groessenumschaltung testen, Panel ein-/ausklappen und Escape
+oeffnen. Besonders Minimap-Inhalte und dynamische Kreaturenlisten visuell pruefen.
+
+Der Windows-Build fuehrt `test-menufix.exe` automatisch aus, wenn `DKII-DX.exe`
+im uebergeordneten Spielordner liegt. Separat:
+
+```powershell
+.\src\build\test-menufix.exe '..\DKII-DX.exe'
+```
+
 ## Selbst bauen
 
 ```bash
