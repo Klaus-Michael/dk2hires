@@ -142,12 +142,12 @@ static void test_real_minimap_controls(void *iface)
         {
             MenuRect queried;
             ((BoundsFn)0x00528570)(button, NULL, &queried);
-            CHECK(queried.x0 == menu_coord(20 + (visual.x0 - 20) * 3 / 4, 1280));
-            CHECK(queried.x1 == menu_coord(20 + (visual.x1 - 20) * 3 / 4, 1280));
+            CHECK(queried.x0 == menu_coord(20 + (visual.x0 - 20) * 3 / 4, 0));
+            CHECK(queried.x1 == menu_coord(20 + (visual.x1 - 20) * 3 / 4, 0));
         }
         menu_button_hit(button, NULL, &hit);
-        CHECK(hit.x0 == menu_coord(20 + (visual.x0 + x0 - 20) * 3 / 4, 1280));
-        CHECK(hit.x1 == menu_coord(20 + (visual.x0 + x0 + width - 20) * 3 / 4, 1280));
+        CHECK(hit.x0 == menu_coord(20 + (visual.x0 + x0 - 20) * 3 / 4, 0));
+        CHECK(hit.x1 == menu_coord(20 + (visual.x0 + x0 + width - 20) * 3 / 4, 0));
         CHECK(hit.y0 == menu_coord(visual.y0 + y0, 1920));
         CHECK(hit.y1 == menu_coord(visual.y0 + y0 + height, 1920));
         {
@@ -161,7 +161,7 @@ static void test_real_minimap_controls(void *iface)
         ((int (__fastcall *)(void *, void *, void *))0x0052bbd0)(GAME_GUI, NULL, iface);
         CHECK(draw_count == 1);
         CHECK(draw_asset == fake_assets + FIELD(int, button, 0x2c) * 27);
-        CHECK(draw_x == menu_coord(20 + (visual.x0 - 20) * 3 / 4, 1280));
+        CHECK(draw_x == menu_coord(20 + (visual.x0 - 20) * 3 / 4, 0));
         CHECK(draw_w == (visual.x1 - visual.x0) * 3 / 8);
         FIELD(int, button, 0x49) = 0;
         draw_count = 0;
@@ -255,7 +255,7 @@ static void test_direct_render(void)
         menu_percent = 50;
         ((InterfaceDraw)0x0041c660)(iface, NULL);
         for (i = 0; i < 8; ++i) {
-            CHECK(polygon[i*4] == 1280.0f + (original[i*4] - 1280.0f) * 0.5f);
+            CHECK(polygon[i*4] == original[i*4] * 0.5f);
             CHECK(polygon[i*4+1] == 1440.0f + (original[i*4+1] - 1440.0f) * 0.5f);
             CHECK(polygon[i*4+2] == original[i*4+2] && polygon[i*4+3] == original[i*4+3]);
         }
@@ -279,7 +279,7 @@ static void test_direct_render(void)
         menu_percent = 50;
         ((InterfaceDraw)0x0041b180)(iface, NULL);
         for (i = 0; i < 8; ++i) {
-            CHECK(polygon[i*4] == 1280.0f + (original[i*4] - 1280.0f) * 0.5f);
+            CHECK(polygon[i*4] == original[i*4] * 0.5f);
             CHECK(polygon[i*4+1] == 1440.0f + (original[i*4+1] - 1440.0f) * 0.5f);
             CHECK(polygon[i*4+2] == original[i*4+2] && polygon[i*4+3] == original[i*4+3]);
         }
@@ -296,7 +296,7 @@ static void test_direct_render(void)
         CHECK(FIELD(int, info, 4) == 128 && FIELD(int, info, 8) == 264);
         menu_rendering = 1;
         draw(fake_bridge, NULL, 20, 20, 7, info);
-        CHECK(draw_x == 650 && draw_y == 730 && draw_w == 64 && draw_h == 132);
+        CHECK(draw_x == 10 && draw_y == 730 && draw_w == 64 && draw_h == 132);
         CHECK(FIELD(int, info, 4) == 128 && FIELD(int, info, 8) == 264);
         menu_rendering = 0;
     }
@@ -419,6 +419,12 @@ int main(int argc, char **argv)
 
     for (s = 50; s <= 100; s += 25) {
         menu_percent = s;
+        {
+            MenuRect full_hud = {0, 1440, 2560, 1920};
+            menu_rect(&full_hud);
+            CHECK(full_hud.x0 == 0);
+            CHECK(full_hud.x1 == 2560 * s / 100 && full_hud.y1 == 1920);
+        }
         for (h = 768; h <= 2160; h += 696) {
             *(DWORD *)0x00756ef0 = h;
             for (id = 1; id <= 53; ++id) {
@@ -426,7 +432,7 @@ int main(int argc, char **argv)
                 make_window(win, id);
                 active = h > 768 && ((id <= 20) || (id >= 39 && id <= 44));
                 button_bounds(button, NULL, &got);
-                CHECK(got.x0 == (active ? menu_coord(before.x0, 1280) : before.x0));
+                CHECK(got.x0 == (active ? menu_coord(before.x0, 0) : before.x0));
                 CHECK(got.y1 == (active ? menu_coord(before.y1, 1920) : before.y1));
                 /* Real window gate and button hit test agree with final geometry,
                  * including the button's separate local clickable inset. */
@@ -455,23 +461,48 @@ int main(int argc, char **argv)
     FIELD(void *, button, 0x55) = child;
     raw_button(button, NULL, &before);
     button_bounds(button, NULL, &got);
-    CHECK(got.x0 == menu_coord(before.x0, 1280)); /* nested windows scale exactly once */
+    CHECK(got.x0 == menu_coord(before.x0, 0)); /* nested windows scale exactly once */
     CHECK(got.y0 == menu_coord(before.y0, 1920));
     FIELD(void *, button, 0x55) = win;
     FIELD(WORD, button, 0x65) = 6; /* right and bottom alignment */
     raw_button(button, NULL, &before);
     button_bounds(button, NULL, &got);
-    CHECK(got.x1 == menu_coord(before.x1, 1280));
+    CHECK(got.x1 == menu_coord(before.x1, 0));
     CHECK(got.y1 == menu_coord(before.y1, 1920));
     FIELD(void *, win, 0x4e) = (BYTE *)GAME_GUI + 512;
     button_bounds(button, NULL, &got);
     CHECK(memcmp(&before, &got, sizeof(got)) == 0); /* frontend manager untouched */
     {
         MenuRect viewport = {0, 100, 2560, 1612}, original;
-        ((ScaleFn)0x0052c630)(GAME_GUI, NULL, &original, &viewport);
-        menu_viewport(GAME_GUI, NULL, &got, &viewport);
-        CHECK(got.x0 == original.x0 && got.x1 == original.x1 && got.y0 == original.y0);
-        CHECK(got.y1 > original.y1 && got.y1 < 1440);
+        const int resolutions[][2] = {{1024,768}, {1920,1080}, {2560,1440}, {3840,2160}, {3840,2560}};
+        int i;
+        for (i = 0; i < sizeof(resolutions)/sizeof(resolutions[0]); ++i) {
+            FIELD(int, GAME_GUI, 4) = *(DWORD *)0x00756eec = resolutions[i][0];
+            FIELD(int, GAME_GUI, 8) = *(DWORD *)0x00756ef0 = resolutions[i][1];
+            ((ScaleFn)0x0052c630)(GAME_GUI, NULL, &original, &viewport);
+            for (s = 50; s <= 100; s += 25) {
+                MenuRect input = viewport;
+                menu_percent = s;
+                menu_viewport(GAME_GUI, NULL, &got, &input);
+                CHECK(got.x0 == original.x0 && got.x1 == original.x1 && got.y0 == original.y0);
+                CHECK(got.y1 == ((s < 100 && resolutions[i][1] > 768) ? resolutions[i][1] : original.y1));
+                CHECK(memcmp(&input, &viewport, sizeof(input)) == 0);
+                /* Input and output may share the same rectangle. */
+                menu_viewport(GAME_GUI, NULL, &input, &input);
+                CHECK(memcmp(&input, &got, sizeof(input)) == 0);
+            }
+        }
+        /* A different GUI must keep its original viewport. */
+        {
+            BYTE frontend[484] = {0};
+            FIELD(int, frontend, 4) = 3840;
+            FIELD(int, frontend, 8) = 2560;
+            menu_percent = 50;
+            ((ScaleFn)0x0052c630)(frontend, NULL, &original, &viewport);
+            menu_viewport(frontend, NULL, &got, &viewport);
+            CHECK(memcmp(&got, &original, sizeof(got)) == 0);
+        }
+        puts("World viewport: full screen height beside scaled HUD at 1080p/1440p/4K/2560 lines; 768p, 100% and frontend preserved");
     }
     test_mouse_selection();
     test_direct_render();

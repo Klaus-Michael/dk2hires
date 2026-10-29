@@ -199,12 +199,20 @@ MenuScale=75
 ```
 
 `75` verkleinert Breite und Hoehe des unteren HUD auf 75 Prozent und verankert es
-unten mittig. Erlaubt sind 50 bis 100; `100` stellt die Originalgroesse wieder her.
+unten links. Erlaubt sind 50 bis 100; `100` stellt die Originalgroesse wieder her.
 Ohne diese Option bleibt die Originalgroesse erhalten. Die Skalierung wirkt nur
 bei mehr als 768 Bildzeilen. Nach einer Aenderung das Spiel neu starten.
 Minimap, Panel-Tabs, Kreaturen-/Raum-/Zauber-/Werkstatt-Buttons und die zum unteren
 HUD gehoerenden Benachrichtigungen werden gemeinsam angepasst. Hauptmenue,
 Escape-Optionen und obere Infozeile behalten ihre Groesse.
+
+Bei verkleinertem HUD reicht die 3D-Ansicht bis zum unteren Bildschirmrand und
+liegt hinter dem HUD. So bleiben neben dem links ausgerichteten Menue keine schwarzen
+Streifen aus dessen urspruenglicher Hoehe stehen. Die bisherige Anpassung der
+Schnittkante an die skalierte HUD-Oberkante gab nur einen Teil dieser Flaeche frei.
+Der Geometrietest prueft die volle Bildhoehe bei 1080p, 1440p, 2160 und 2560
+Bildzeilen sowie unveraendertes Verhalten bei 768 Zeilen, 100 Prozent und im
+Hauptmenue. Die Darstellung im laufenden Spiel muss noch visuell geprueft werden.
 
 Die Laufzeit-Hooks skalieren die fertigen Zeichnungsauftraege und die getrennten
 Trefferbereiche; die urspruenglichen Layoutdaten und Panel-Iconzahlen bleiben

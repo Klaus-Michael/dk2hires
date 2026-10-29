@@ -72,15 +72,15 @@ static int menu_coord(int value, int anchor)
 {
     LONGLONG numerator = ((LONGLONG)value - anchor) * menu_percent;
     /* Floor consistently on both sides of the anchor. Truncation towards zero
-     * loses a pixel when a sprite crosses the bottom/centre anchor. */
+     * loses a pixel when a sprite crosses the bottom/left anchor. */
     if (numerator < 0) numerator -= 99;
     return anchor + (int)(numerator / 100);
 }
 
 static void menu_rect(MenuRect *r)
 {
-    r->x0 = menu_coord(r->x0, 1280);
-    r->x1 = menu_coord(r->x1, 1280);
+    r->x0 = menu_coord(r->x0, 0);
+    r->x1 = menu_coord(r->x1, 0);
     r->y0 = menu_coord(r->y0, 1920);
     r->y1 = menu_coord(r->y1, 1920);
 }
@@ -156,10 +156,12 @@ static int __fastcall menu_visit(void *button, void *unused, const int *point)
 static MenuRect *__fastcall menu_viewport(void *gui, void *unused, MenuRect *out, const MenuRect *in)
 {
     MenuRect adjusted = *in;
-    /* The world view reserves a full-width strip above the panel. Reclaim the
-     * vertical space released by shrinking it, without narrowing the 3D view. */
+    /* The smaller, left-aligned HUD leaves the right side of the original full-width
+     * strip exposed. Render the world behind the HUD all the way to the bottom;
+     * moving the cutoff to the scaled HUD top still leaves a black side strip.
+     * This rectangle is in the GUI's 2560x1920 layout coordinates. */
     if (gui == GAME_GUI && menu_percent != 100 && *(DWORD *)0x00756ef0 > 768)
-        adjusted.y1 = menu_coord(adjusted.y1, 1920);
+        adjusted.y1 = 1920;
     return ((ScaleFn)0x0052c630)(gui, unused, out, &adjusted);
 }
 
@@ -191,9 +193,9 @@ static void *__fastcall menu_mesh(void *bridge, void *unused, int x, int y, int 
         }
         /* Scale endpoints together to avoid gaps between repeated header tiles
          * and adjacent glyphs. Never mutate borrowed/cached render descriptors. */
-        FIELD(int, copy, 4) = menu_pixel(x + w, screen_w / 2) - menu_pixel(x, screen_w / 2);
+        FIELD(int, copy, 4) = menu_pixel(x + w, 0) - menu_pixel(x, 0);
         FIELD(int, copy, 8) = menu_pixel(y + h, screen_h) - menu_pixel(y, screen_h);
-        x = menu_pixel(x, screen_w / 2); y = menu_pixel(y, screen_h);
+        x = menu_pixel(x, 0); y = menu_pixel(y, screen_h);
         info = copy;
     }
     return draw(engine, unused, x, y, kind, info);
@@ -208,7 +210,7 @@ static int __fastcall menu_clip(void *bridge, void *unused, const MenuRect *in)
     /* The minimap restores full-screen clipping before returning. Preserve that
      * reset so it cannot clip later top HUD, options or world rendering. */
     if (menu_rendering && !(r.x0 == 0 && r.y0 == 0 && r.x1 == w && r.y1 == h)) {
-        r.x0 = menu_pixel(r.x0, w / 2); r.x1 = menu_pixel(r.x1, w / 2);
+        r.x0 = menu_pixel(r.x0, 0); r.x1 = menu_pixel(r.x1, 0);
         r.y0 = menu_pixel(r.y0, h); r.y1 = menu_pixel(r.y1, h);
     }
     return clip(engine, unused, &r);
@@ -281,7 +283,7 @@ static int __cdecl menu_poly(int count, int faces, const void *vertices, const v
         if (copy) {
             memcpy(copy, vertices, count * 4 * sizeof(float));
             for (i = 0; i < count; ++i) {
-                copy[i * 4] = w * 0.5f + (copy[i * 4] - w * 0.5f) * menu_percent / 100.0f;
+                copy[i * 4] = copy[i * 4] * menu_percent / 100.0f;
                 copy[i * 4 + 1] = h + (copy[i * 4 + 1] - h) * menu_percent / 100.0f;
             }
             vertices = copy;
@@ -382,6 +384,6 @@ int menufix_install(const char *ini)
         dk_log("menufix: Schreiben fehlgeschlagen, Originalcode wiederhergestellt");
         return 0;
     }
-    dk_log("menufix: aktiv (Renderpfade v4, Minimap-Buttons), unteres HUD %d%%, unten zentriert, nur Bildhoehe > 768", menu_percent);
+    dk_log("menufix: aktiv (Renderpfade v7, volle 3D-Bildhoehe), unteres HUD %d%%, unten links, nur Bildhoehe > 768", menu_percent);
     return 1;
 }
