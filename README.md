@@ -59,6 +59,16 @@ Windows und andere Launcher sind nicht getestet. In 3840×2560 lief das Spiel im
 Bildern pro Sekunde; woran das liegt, ist nicht untersucht. Hauptmenü und Filme laufen wie im
 Original in 640×480 und werden hochskaliert.
 
+Lokale Windows-Korrektur (29.10.2026): Der Heap-Fix vergroessert nur Spielmodi oberhalb
+von 640x480 und veraendert die globale `-EHEAP`-Einstellung nicht mehr. Bisher blieb
+der 224-MB-Mindestwert fuer 4K auch beim Rueckweg ins 640x480-Frontend aktiv.
+Nach dem Abschlussfilm konnte dessen erneute Speicheranforderung im fragmentierten
+32-Bit-Adressraum fehlschlagen (Absturz bei `0x0057cc65`). Das Frontend verwendet
+jetzt wieder seine urspruenglichen 64 MB; explizite groessere `-EHEAP`-Werte bleiben
+erhalten. `src/test-heapfix.c` prueft die Folge Frontend -> 4K -> Frontend -> 4K.
+Mit dem Spielstand `crash` wurde der Fehler vor der Korrektur reproduziert; nach
+der Korrektur lief der Abschluss bis zur Highscore-Eingabe ohne Absturz durch.
+
 ## Einspielen
 
 Unter nativem Windows im Ordner `dk2hires` mit PowerShell:

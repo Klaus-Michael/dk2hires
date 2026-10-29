@@ -25,6 +25,13 @@ try {
     (Get-Content (Join-Path $PSScriptRoot 'dsound.def') -Raw) -replace '=px_', '=_px_' | Set-Content -LiteralPath "$OutDir\dsound-msvc.def" -Encoding ASCII
     & cl.exe /nologo /LD /O2 /W3 /MT /std:c11 /utf-8 /D_CRT_SECURE_NO_WARNINGS "/Fo$OutDir\" "/Fe$OutDir\dsound.dll" @sources "$OutDir\version.res" /link "/DEF:$OutDir\dsound-msvc.def" /Brepro /DYNAMICBASE /NXCOMPAT /BASE:0x68b80000 kernel32.lib user32.lib advapi32.lib
     if ($LASTEXITCODE) { throw 'DLL-Build fehlgeschlagen.' }
+    & cl.exe /nologo /O2 /W3 /MT /std:c11 /utf-8 "/Fo$OutDir\test-heapfix.obj" "/Fe$OutDir\test-heapfix.exe" (Join-Path $PSScriptRoot 'test-heapfix.c') /link /BASE:0x10000000 /DYNAMICBASE advapi32.lib user32.lib
+    if ($LASTEXITCODE) { throw 'Heap-Test-Build fehlgeschlagen.' }
+    & "$OutDir\test-heapfix.exe"
+    for ($heapAttempt = 1; $LASTEXITCODE -eq 77 -and $heapAttempt -lt 5; ++$heapAttempt) {
+        & "$OutDir\test-heapfix.exe"
+    }
+    if ($LASTEXITCODE) { throw 'Heap-Uebergangstest fehlgeschlagen.' }
     & cl.exe /nologo /O2 /W3 /MT /std:c11 /utf-8 "/Fo$OutDir\test-wheelzoom.obj" "/Fe$OutDir\test-wheelzoom.exe" (Join-Path $PSScriptRoot 'test-wheelzoom.c') user32.lib dinput8.lib dxguid.lib
     if ($LASTEXITCODE) { throw 'Test-Build fehlgeschlagen.' }
     & "$OutDir\test-wheelzoom.exe"
