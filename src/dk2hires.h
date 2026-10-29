@@ -14,6 +14,7 @@ int heapfix_install(const char *ini);
 int camfix_install(const char *ini);
 int fontfix_install(const char *ini);
 int menufix_install(const char *ini);
+int cursorfix_install(const char *ini);
 int wheelzoom_install(const char *ini);
 
 void diag_bp_init(const char *ini);

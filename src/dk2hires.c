@@ -192,6 +192,7 @@ static void startup(void)
     else dk_log("camfix: per dk2hires.ini abgeschaltet");
     fontfix_install(path);
     menufix_install(path);
+    cursorfix_install(path);
     wheelzoom_install(path);
     diag_bp_init(path);
     {

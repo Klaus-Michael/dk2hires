@@ -20,7 +20,7 @@ try {
     $rc = Join-Path $sdkRoot "bin\$sdkVersion\x64\rc.exe"
     & $rc /nologo "/fo$OutDir\version.res" (Join-Path $PSScriptRoot 'version.rc')
     if ($LASTEXITCODE) { throw 'Resource-Kompilierung fehlgeschlagen.' }
-    $sources = @('dk2hires.c', 'hooks.c', 'tilefix.c', 'heapfix.c', 'camfix.c', 'fontfix.c', 'menufix.c', 'wheelzoom.c', 'diag_bp.c', 'dsound_proxy.c', 'native_stubs.c') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+    $sources = @('dk2hires.c', 'hooks.c', 'tilefix.c', 'heapfix.c', 'camfix.c', 'fontfix.c', 'menufix.c', 'cursorfix.c', 'wheelzoom.c', 'diag_bp.c', 'dsound_proxy.c', 'native_stubs.c') | ForEach-Object { Join-Path $PSScriptRoot $_ }
     # MSVC needs the leading underscore on decorated x86 stdcall exports.
     (Get-Content (Join-Path $PSScriptRoot 'dsound.def') -Raw) -replace '=px_', '=_px_' | Set-Content -LiteralPath "$OutDir\dsound-msvc.def" -Encoding ASCII
     & cl.exe /nologo /LD /O2 /W3 /MT /std:c11 /utf-8 /D_CRT_SECURE_NO_WARNINGS "/Fo$OutDir\" "/Fe$OutDir\dsound.dll" @sources "$OutDir\version.res" /link "/DEF:$OutDir\dsound-msvc.def" /Brepro /DYNAMICBASE /NXCOMPAT /BASE:0x68b80000 kernel32.lib user32.lib advapi32.lib
@@ -43,6 +43,13 @@ try {
             & "$OutDir\test-menufix.exe" $gameExe
         }
         if ($LASTEXITCODE) { throw 'Menufix-Geometrietest fehlgeschlagen.' }
+        & cl.exe /nologo /O2 /W3 /MT /std:c11 /utf-8 /D_CRT_SECURE_NO_WARNINGS "/Fo$OutDir\\" "/Fe$OutDir\test-cursorfix.exe" (Join-Path $PSScriptRoot 'test-cursorfix.c') (Join-Path $PSScriptRoot 'hooks.c') /link /BASE:0x10000000 /DYNAMICBASE user32.lib
+        if ($LASTEXITCODE) { throw 'Cursor-Test-Build fehlgeschlagen.' }
+        & "$OutDir\test-cursorfix.exe" $gameExe
+        for ($cursorAttempt = 1; $LASTEXITCODE -eq 77 -and $cursorAttempt -lt 5; ++$cursorAttempt) {
+            & "$OutDir\test-cursorfix.exe" $gameExe
+        }
+        if ($LASTEXITCODE) { throw 'Cursor-Test fehlgeschlagen.' }
     }
     Get-FileHash -LiteralPath "$OutDir\dsound.dll" -Algorithm SHA256
 } finally {

@@ -290,3 +290,33 @@ der mitgelieferten Windows-DLL steht in `install.ps1`.
 ## Lizenz
 
 MIT, siehe `LICENSE`. Die Lizenz gilt für den Code in diesem Repository.
+
+## Cursor size
+
+Set `CursorScale` under `[fix]` in `dk2hires.ini` beside `DKII-DX.exe`:
+
+```ini
+CursorScale=50
+```
+
+50 halves cursor width and height; 75 gives three-quarter size; 100 restores
+original behaviour. Values are clamped to 25..200. Restart the game after changes.
+The setting scales cursor animation frames and their mouse-relative hotspots
+independently of `MenuScale`, preserving the click position and transparency.
+It applies to the native cursor compositor, including menu pointers.
+The DLL reuses a temporary surface in the source cursor pixel format and resizes
+each animation frame through locked pixels, preserving exact transparency colours
+and palettes. This also handles mining and creature-carrying cursor animations
+when DirectDraw rejects a stretched blit. The original compositor handles screen-
+edge clipping and background restoration. A surface failure falls back to the
+original cursor and is logged.
+Addresses and types were checked against the local EXE and
+[Flame's mapping](https://github.com/DiaLight/Flame/blob/main/mapping/DKII_EXE_v170.sgmap).
+
+The Windows build runs `test-cursorfix.exe` against the real EXE's cursor image
+routine with a simulated DirectDraw backend: exact output pixels for animated
+8/16/24/32-bit cursor atlases, palettes, 25/50/75/100/200 percent, animation frame
+selection, allocation reuse, hotspot coordinates, hidden cursors, lost-surface
+recovery and fallback. The regression also rejects driver stretch operations: the
+previous patch fails this case and the pixel resizer passes. Actual DirectDraw
+output and visual cursor appearance require an in-game check.
