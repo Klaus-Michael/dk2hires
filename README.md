@@ -202,6 +202,19 @@ und die Auflösung im Spiel neu einstellen.
 
 ## Kleineres unteres Ingame-Menue
 
+Widescreen minimap correction (29.10.2026): `MinimapAspectFix=1` (default)
+gives only the minimap a bottom-aligned virtual 4:3 drawing canvas when the HUD
+is reduced. The frame and its four corner controls grow into the available
+space; other HUD icons retain their `MenuScale` size. Map polygons, camera
+outline, clipping and hit areas follow the same panel geometry. The camera
+outline still projects the real world viewport before its minimap coordinates
+are resized. The previous code mixed width-based map diagonals with a
+height-based frame, causing the map to protrude on widescreen displays.
+Set `MinimapAspectFix=0` to restore the previous layout. Restart after changes.
+The automated harness compares the real frame, map and all four corner controls
+at 4:3, 16:9 and ultrawide aspect ratios, including their click rectangles.
+Live visual verification is left to the user.
+
 Die lokale Erweiterung bietet unter `[fix]` in `dk2hires.ini` neben der Spiel-EXE:
 
 ```ini

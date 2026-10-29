@@ -196,6 +196,12 @@ static void test_direct_render(void)
     memset(button, 0, sizeof(button));
     FIELD(void *, button, 0x55) = win;
     FIELD(MenuRect, button, 0x14) = (MenuRect){40, 0, 356, 312};
+    {
+        typedef void (__fastcall *ConfigureFn)(void *, void *, void *, const void *, void *);
+        BYTE *cfg = FIELD(BYTE *, (void *)0x00693958, 0x3e);
+        FIELD(void *, button, 0) = (void *)0x0066eca4;
+        ((ConfigureFn)0x00528300)(button, NULL, win, cfg + 4*80, NULL);
+    }
     FIELD(int, win, 0x48) = 1;
     FIELD(MenuDrawFn, win, 0x24) = fake_window_draw;
     FIELD(MenuDrawFn, button, 0x28) = (MenuDrawFn)0x00414210;
@@ -322,6 +328,79 @@ static void test_direct_render(void)
     test_real_minimap_controls(iface);
 }
 
+static void test_minimap_aspect(void)
+{
+    BYTE win[112], button[128];
+    void *iface = (void *)0x006cea10;
+    BYTE *cfg = FIELD(BYTE *, (void *)0x00693958, 0x3e);
+    typedef void (__fastcall *ConfigureFn)(void *, void *, void *, const void *, void *);
+    typedef void (__fastcall *InterfaceDraw)(void *, void *);
+    const int heights[] = {1920, 1440, 1080};
+    int scale, j, k, i, base_x[5], base_y[5], base_w[5], base_h[5];
+    MenuRect base_hit[5];
+    float base_map[32];
+    PolyFn saved_poly = raw_poly;
+    raw_poly = record_poly;
+    make_window(win, 20);
+    FIELD(MenuRect, win, 0x14) = (MenuRect){20,1460,460,460};
+    FIELD(MenuRect, win, 4) = (MenuRect){0,0,460,460};
+    FIELD(int, win, 0x48) = 1;
+    FIELD(MenuDrawFn, win, 0x24) = fake_window_draw;
+    FIELD(void *, win, 0x5e) = (BYTE *)GAME_GUI + 0x28;
+    FIELD(void *, win, 0x6a) = button;
+    FIELD(void *, GAME_GUI, 0x98) = win;
+    for (scale = 50; scale <= 75; scale += 25) {
+        menu_percent = scale;
+        for (j = 0; j < 3; ++j) {
+            int h = heights[j];
+            FIELD(int, GAME_GUI, 4) = *(DWORD *)0x00756eec = 2560;
+            FIELD(int, GAME_GUI, 8) = *(DWORD *)0x00756ef0 = h;
+            for (k = 0; k < 5; ++k) {
+                memset(button, 0, sizeof(button));
+                FIELD(void *, button, 0) = (void *)0x0066eca4;
+                ((ConfigureFn)0x00528300)(button, NULL, win, cfg + k*80, NULL);
+                FIELD(int, button, 0x49) = 1;
+                draw_count = 0;
+                ((int (__fastcall *)(void *, void *, void *))0x0052bbd0)(GAME_GUI, NULL, iface);
+                CHECK(draw_count == 1);
+                if (!j) {
+                    base_x[k] = draw_x; base_y[k] = draw_y - h;
+                    base_w[k] = draw_w; base_h[k] = draw_h;
+                } else {
+                    CHECK(draw_w == base_w[k] && draw_h == base_h[k]);
+                    CHECK(draw_x == base_x[k] && draw_y - h == base_y[k]);
+                }
+                CHECK(FIELD(int, GAME_GUI, 8) == h && !menu_rendering && !menu_render_minimap);
+                if (k == 4) CHECK(draw_clip.x0 == 0 && draw_clip.y0 == 0 && draw_clip.x1 == 2560 && draw_clip.y1 == h);
+                {
+                    MenuRect hit, pixels;
+                    int point[2];
+                    menu_button_hit(button, NULL, &hit);
+                    point[0] = (hit.x0 + hit.x1) / 2;
+                    point[1] = (hit.y0 + hit.y1) / 2;
+                    CHECK(menu_contains(button, NULL, point));
+                    CHECK(menu_visit(button, NULL, point));
+                    ((ScaleFn)0x0052c630)(GAME_GUI, NULL, &pixels, &hit);
+                    pixels.y0 -= h; pixels.y1 -= h;
+                    if (!j) base_hit[k] = pixels;
+                    CHECK(abs(pixels.x0 - base_hit[k].x0) <= 1 && abs(pixels.x1 - base_hit[k].x1) <= 1);
+                    CHECK(abs(pixels.y0 - base_hit[k].y0) <= 1 && abs(pixels.y1 - base_hit[k].y1) <= 1);
+                }
+            }
+            ((InterfaceDraw)0x0041c660)(iface, NULL);
+            if (!j) memcpy(base_map, polygon, sizeof(polygon));
+            for (i = 0; i < 8; ++i) {
+                CHECK(polygon[i*4] == base_map[i*4]);
+                CHECK(polygon[i*4+1] - h == base_map[i*4+1] - 1920);
+                CHECK(polygon[i*4+2] == base_map[i*4+2] && polygon[i*4+3] == base_map[i*4+3]);
+            }
+            CHECK(FIELD(int, GAME_GUI, 8) == h && !menu_rendering && !menu_render_minimap);
+        }
+    }
+    raw_poly = saved_poly;
+    puts("Minimap aspect: real frame, all four corners and map match 4:3 geometry on widescreen; GUI height and full clip restored");
+}
+
 static void test_mouse_selection(void)
 {
     BYTE win[112], notices[112], buttons[4][128] = {{0}};
@@ -408,6 +487,7 @@ int main(int argc, char **argv)
     CHECK(*(BYTE *)0x00528570 == 0x83 && *(BYTE *)0x005284b0 == 0x83);
     *(BYTE *)0x0052cdc0 = 0x83;
     CHECK(menufix_install(ini) == 1);
+    menu_map_aspect = 0; /* Preserve legacy coverage before exercising the fix. */
     DeleteFileA(ini);
     {
         MenuRect r;
@@ -506,6 +586,8 @@ int main(int argc, char **argv)
     }
     test_mouse_selection();
     test_direct_render();
+    menu_map_aspect = 1;
+    test_minimap_aspect();
     puts("PASS: real DKII button/window bounds, inset hit tests, nested/aligned controls, frontend exclusion, viewport and drawing");
     printf("%d checks passed\n", checks);
     return 0;

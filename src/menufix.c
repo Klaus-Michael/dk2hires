@@ -13,11 +13,14 @@ typedef MenuRect *(__fastcall *BoundsFn)(void *, void *, MenuRect *);
 typedef MenuRect *(__fastcall *ScaleFn)(void *, void *, MenuRect *, const MenuRect *);
 static BoundsFn raw_button, raw_window_hit;
 static int menu_percent = 100;
+static int menu_map_aspect = 1;
 #ifdef _MSC_VER
 static __declspec(thread) int menu_rendering;
+static __declspec(thread) int menu_render_minimap;
 static __declspec(thread) void *menu_render_button;
 #else
 static __thread int menu_rendering;
+static __thread int menu_render_minimap;
 static __thread void *menu_render_button;
 #endif
 typedef void (__cdecl *MenuDrawFn)(void *, void *);
@@ -30,6 +33,29 @@ static PolyFn raw_poly;
 
 #define GAME_GUI ((void *)0x006cfad6)
 #define FIELD(type, obj, offset) (*(type *)((BYTE *)(obj) + (offset)))
+
+/* The original minimap mixes width-based diagonals with height-based frame
+ * artwork. Use a virtual 4:3 canvas for this panel only, bottom-aligned to the
+ * real display. This enlarges the frame on widescreen without growing the HUD. */
+static int menu_map_height(void)
+{
+    int h = *(DWORD *)0x00756ef0;
+    int square_h = (int)((LONGLONG)*(DWORD *)0x00756eec * 3 / 4);
+    return menu_map_aspect && menu_percent != 100 && h > 768 && square_h > h ? square_h : h;
+}
+
+static void menu_map_begin(void)
+{
+    FIELD(int, GAME_GUI, 8) = menu_map_height();
+}
+
+static int menu_map_y(int y)
+{
+    int h = *(DWORD *)0x00756ef0;
+    if (menu_render_minimap == 2)
+        return h + (int)(((LONGLONG)y - h) * menu_map_height() / h);
+    return menu_render_minimap ? y + h - menu_map_height() : y;
+}
 
 static int menu_window_selected(void *win)
 {
@@ -60,7 +86,7 @@ static int menu_square_x(int x, int anchor)
 
 static void menu_corner_hit_x(void *button, MenuRect *r)
 {
-    if (menu_minimap_corner(button)) {
+    if (menu_minimap_corner(button) && menu_map_height() == (int)*(DWORD *)0x00756ef0) {
         MenuRect win;
         ((BoundsFn)0x0052ce50)(FIELD(void *, button, 0x55), NULL, &win);
         r->x0 = menu_square_x(r->x0, win.x0);
@@ -85,6 +111,16 @@ static void menu_rect(MenuRect *r)
     r->y1 = menu_coord(r->y1, 1920);
 }
 
+static void menu_window_rect(void *win, MenuRect *r)
+{
+    if (FIELD(int, win, 0x44) == 20) {
+        int h = *(DWORD *)0x00756ef0, virtual_h = menu_map_height();
+        r->y0 = 1920 + (int)(((LONGLONG)r->y0 - 1920) * virtual_h / h);
+        r->y1 = 1920 + (int)(((LONGLONG)r->y1 - 1920) * virtual_h / h);
+    }
+    menu_rect(r);
+}
+
 static MenuRect *__fastcall menu_button_bounds(void *button, void *unused, MenuRect *out)
 {
     MenuRect *r = raw_button(button, unused, out);
@@ -92,7 +128,7 @@ static MenuRect *__fastcall menu_button_bounds(void *button, void *unused, MenuR
      * or polygon submission is transformed once, after local offsets/sizes. */
     if (!menu_rendering && menu_active(FIELD(void *, button, 0x55))) {
         menu_corner_hit_x(button, r);
-        menu_rect(r);
+        menu_window_rect(FIELD(void *, button, 0x55), r);
     }
     return r;
 }
@@ -100,7 +136,7 @@ static MenuRect *__fastcall menu_button_bounds(void *button, void *unused, MenuR
 static MenuRect *__fastcall menu_window_hit(void *win, void *unused, MenuRect *out)
 {
     MenuRect *r = raw_window_hit(win, unused, out);
-    if (menu_active(win)) menu_rect(r);
+    if (menu_active(win)) menu_window_rect(win, r);
     return r;
 }
 
@@ -128,7 +164,7 @@ static MenuRect *__fastcall menu_button_hit(void *button, void *unused, MenuRect
      * rectangle in layout space until the final rendering submission. */
     if (!menu_rendering && menu_active(FIELD(void *, button, 0x55))) {
         menu_corner_hit_x(button, out);
-        menu_rect(out);
+        menu_window_rect(FIELD(void *, button, 0x55), out);
     }
     return out;
 }
@@ -139,7 +175,7 @@ static int __fastcall menu_contains(void *button, void *unused, const int *point
     menu_raw_hit(button, unused, &r);
     if (menu_active(FIELD(void *, button, 0x55))) {
         menu_corner_hit_x(button, &r);
-        menu_rect(&r);
+        menu_window_rect(FIELD(void *, button, 0x55), &r);
     }
     return point[0] >= r.x0 && point[0] < r.x1 && point[1] >= r.y0 && point[1] < r.y1;
 }
@@ -179,7 +215,7 @@ static void *__fastcall menu_mesh(void *bridge, void *unused, int x, int y, int 
         int w = FIELD(int, info, 4), h = FIELD(int, info, 8);
         int screen_w = *(DWORD *)0x00756eec, screen_h = *(DWORD *)0x00756ef0;
         memcpy(copy, info, sizeof(copy));
-        if (menu_minimap_corner(menu_render_button)) {
+        if (menu_minimap_corner(menu_render_button) && menu_map_height() == screen_h) {
             MenuRect win;
             int anchor, end;
             ((BoundsFn)0x0052ce50)(FIELD(void *, menu_render_button, 0x55), NULL, &win);
@@ -191,6 +227,7 @@ static void *__fastcall menu_mesh(void *bridge, void *unused, int x, int y, int 
             x = menu_square_x(x, anchor);
             w = end - x;
         }
+        y = menu_map_y(y);
         /* Scale endpoints together to avoid gaps between repeated header tiles
          * and adjacent glyphs. Never mutate borrowed/cached render descriptors. */
         FIELD(int, copy, 4) = menu_pixel(x + w, 0) - menu_pixel(x, 0);
@@ -207,6 +244,11 @@ static int __fastcall menu_clip(void *bridge, void *unused, const MenuRect *in)
     void *engine = FIELD(void *, bridge, 0x9e);
     ClipFn clip = FIELD(ClipFn, FIELD(void *, engine, 0), 0x6c);
     int w = *(DWORD *)0x00756eec, h = *(DWORD *)0x00756ef0;
+    if (menu_render_minimap == 1) {
+        if (r.x0 == 0 && r.y0 == 0 && r.x1 == w && r.y1 == menu_map_height())
+            r.y1 = h;
+        else { r.y0 = menu_map_y(r.y0); r.y1 = menu_map_y(r.y1); }
+    }
     /* The minimap restores full-screen clipping before returning. Preserve that
      * reset so it cannot clip later top HUD, options or world rendering. */
     if (menu_rendering && !(r.x0 == 0 && r.y0 == 0 && r.x1 == w && r.y1 == h)) {
@@ -226,8 +268,11 @@ static int __fastcall menu_draw_gui(void *gui, void *unused, void *iface)
         void *button;
         FIELD(void *, gui, 0x9c) = win;
         if (FIELD(int, win, 0x48)) {
+            int previous_map = menu_render_minimap, previous_height = FIELD(int, GAME_GUI, 8);
             MenuDrawFn render = FIELD(MenuDrawFn, win, 0x24);
             menu_rendering = menu_active(win);
+            menu_render_minimap = menu_rendering && FIELD(int, win, 0x44) == 20;
+            if (menu_render_minimap) menu_map_begin();
             menu_render_button = NULL;
             if (render) render(win, iface);
             else ((int (__fastcall *)(void *, void *))FIELD(void *, FIELD(void *, win, 0), 4))(win, unused);
@@ -238,6 +283,8 @@ static int __fastcall menu_draw_gui(void *gui, void *unused, void *iface)
                 else ((int (__fastcall *)(void *, void *, void *, void *))
                     FIELD(void *, FIELD(void *, button, 0), 4))(button, unused, button, iface);
             }
+            FIELD(int, GAME_GUI, 8) = previous_height;
+            menu_render_minimap = previous_map;
         }
         win = FIELD(void *, win, 0x5e);
     } while (win != (BYTE *)gui + 0x28);
@@ -257,16 +304,26 @@ static void __fastcall menu_header(void *iface, void *unused)
 static void __fastcall menu_map(void *iface, void *unused)
 {
     int previous = menu_rendering;
+    int previous_map = menu_render_minimap, previous_height = FIELD(int, GAME_GUI, 8);
     menu_rendering = menu_percent != 100 && *(DWORD *)0x00756ef0 > 768;
+    menu_render_minimap = menu_rendering;
+    if (menu_render_minimap) menu_map_begin();
     raw_map(iface, unused);
+    FIELD(int, GAME_GUI, 8) = previous_height;
+    menu_render_minimap = previous_map;
     menu_rendering = previous;
 }
 
 static void __fastcall menu_outline(void *iface, void *unused)
 {
     int previous = menu_rendering;
+    int previous_map = menu_render_minimap;
     menu_rendering = menu_percent != 100 && *(DWORD *)0x00756ef0 > 768;
+    /* This routine also projects the WORLD viewport's corners. Leave its input
+     * dimensions physical, then expand only the resulting minimap coordinates. */
+    menu_render_minimap = menu_rendering ? 2 : 0;
     raw_outline(iface, unused);
+    menu_render_minimap = previous_map;
     menu_rendering = previous;
 }
 
@@ -283,8 +340,11 @@ static int __cdecl menu_poly(int count, int faces, const void *vertices, const v
         if (copy) {
             memcpy(copy, vertices, count * 4 * sizeof(float));
             for (i = 0; i < count; ++i) {
+                float y = copy[i * 4 + 1];
                 copy[i * 4] = copy[i * 4] * menu_percent / 100.0f;
-                copy[i * 4 + 1] = h + (copy[i * 4 + 1] - h) * menu_percent / 100.0f;
+                if (menu_render_minimap == 2) y = h + (y - h) * menu_map_height() / h;
+                else if (menu_render_minimap) y += h - menu_map_height();
+                copy[i * 4 + 1] = h + (y - h) * menu_percent / 100.0f;
             }
             vertices = copy;
         }
@@ -335,6 +395,7 @@ int menufix_install(const char *ini)
     DWORD rel;
     int ok, i;
     menu_percent = (int)GetPrivateProfileIntA("fix", "MenuScale", 100, ini);
+    menu_map_aspect = GetPrivateProfileIntA("fix", "MinimapAspectFix", 1, ini) != 0;
     if (menu_percent < 50) menu_percent = 50;
     if (menu_percent > 100) menu_percent = 100;
     if (menu_percent == 100) { dk_log("menufix: aus (MenuScale=100)"); return 0; }
@@ -384,6 +445,6 @@ int menufix_install(const char *ini)
         dk_log("menufix: Schreiben fehlgeschlagen, Originalcode wiederhergestellt");
         return 0;
     }
-    dk_log("menufix: aktiv (Renderpfade v7, volle 3D-Bildhoehe), unteres HUD %d%%, unten links, nur Bildhoehe > 768", menu_percent);
+    dk_log("menufix: aktiv (Renderpfade v8, Minimap-Seitenverhaeltnis %d), unteres HUD %d%%, unten links, nur Bildhoehe > 768", menu_map_aspect, menu_percent);
     return 1;
 }
