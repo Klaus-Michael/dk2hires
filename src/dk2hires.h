@@ -16,6 +16,7 @@ int fontfix_install(const char *ini);
 int menufix_install(const char *ini);
 int cursorfix_install(const char *ini);
 int wheelzoom_install(const char *ini);
+void mousefix_install(void);
 
 void diag_bp_init(const char *ini);
 int diag_bp_handle(PEXCEPTION_POINTERS ep);

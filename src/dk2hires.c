@@ -193,6 +193,7 @@ static void startup(void)
     fontfix_install(path);
     menufix_install(path);
     cursorfix_install(path);
+    mousefix_install();
     wheelzoom_install(path);
     diag_bp_init(path);
     {
